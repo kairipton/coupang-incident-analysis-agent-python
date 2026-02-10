@@ -36,7 +36,7 @@ def load_vector_db(remake_db=False) -> Chroma:
     if remake_db is True or not os.path.exists( db_path ):
 
         #rule_loader = TextLoader( f"./Knowledge Base/{Config.game_rule_md_name}", encoding="utf8" )
-        manual_loader = TextLoader( f"./Knowledge Base/{Config.game_manual_md_name}", encoding="utf8" )
+        manual_loader = TextLoader( f"./Knowledge Base/{Config.manual_md_name}", encoding="utf8" )
         #rule = rule_loader.load()
         manual = manual_loader.load()
         vector_db = None

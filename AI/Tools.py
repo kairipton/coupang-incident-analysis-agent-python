@@ -1,6 +1,5 @@
 from langchain.agents import create_agent
-from langchain.agents import AgentExecutor
-from langchain.agents import tool
+from langchain_core.tools import tool
 
 
 @tool
@@ -74,4 +73,4 @@ def reset_connection_pool() -> None:
     """
     pass
 
-tools = [ kill_process, restart_service, clear_cache, rotate_logs, block_ip, reset_connection_pool ]
+all_tools = [ kill_process, restart_service, clear_cache, rotate_logs, block_ip, reset_connection_pool ]

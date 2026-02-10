@@ -44,11 +44,11 @@ def run_sync_test():
         # 3. 결과 출력
         # 동기 모드는 스트리밍이 아니므로 완성된 문장이 한 번에 옵니다.
         ai_msg = response["message"]
-        o2 = response["o2"]
-        phase = response["phase"]
+        #o2 = response["o2"]
+        #phase = response["phase"]
         
         print(f"[AI]: {ai_msg}")
-        print(f"(Debug: 산소={o2}, 페이즈={phase})")
+        #print(f"(Debug: 산소={o2}, 페이즈={phase})")
 
 # ----------------------------------------------------------------
 # 2. [비동기 모드] 스트리밍 호출 (Non-Blocking)
@@ -91,5 +91,5 @@ async def run_async_test():
         print() # 줄바꿈
 
 if __name__ == "__main__":
-    #run_sync_test()
-    asyncio.run(run_async_test())
+    run_sync_test()
+    #asyncio.run(run_async_test())

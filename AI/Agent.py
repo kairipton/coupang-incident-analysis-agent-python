@@ -7,7 +7,6 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 import langchain_core.vectorstores as VectorStore
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
-from langgraph.prebuilt import create_react_agent
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
 import GameConfig as config
@@ -42,30 +41,42 @@ class Agent:
         self.session_id: str = session_id
         self.get_session_history: History.BaseChatMessageHistory = get_session_history_func
 
-        self.qa_prompt = Prompt.PromptTemplate.from_template("""
 
-            프롬프트는 변경중이라네...
-                                                             
-            {input_result_prompt}
 
-            {document}
+
+        # self.qa_prompt = Prompt.PromptTemplate.from_template("""
+
+        #     프롬프트는 변경중이라네...
                                                              
+        #     {input_result_prompt}
+
+        #     {document}
+                                                             
+        #     {agent_scratchpad}
+
+
+        #     """,
+        # )
+
+        self.agent_prompt = """
+            당신은 시스템 관리자를 돕는 AI Agent 입니다.
+            현재 상황을 해결할 수 있는 도움을 주십시오.
+            
             {agent_scratchpad}
+        """
 
-
-            """,
-        )
-
-        # 에이전트
+        # 여기에 넣는 프롬프트는 create_agent할때 고정이다.
+        # 다시 create_agent를 호출하기 전까지는 고정.
+        # 실제ㅐ 
         self.agent = create_agent(
-            llm = self.llm,
-            tools = Tools.tool,
-            system_prompt=self.qa_prompt
+            model = self.llm,
+            tools = Tools.all_tools,
+            system_prompt=self.agent_prompt
         )
 
         
     @traceable
-    def run_qa(self, question:str, user_var:dict, run_type:int=0):
+    def run_qa(self, question:str):
         """
         질의응답 실행
 
@@ -86,18 +97,22 @@ class Agent:
         
         if self.retriever is None:
             raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
- 
-        # 체인 만들고
-        #rag_chain = Runnable.RunnableWithMessageHistory(
-        #    runnable = self.final_chain, # 최종 체인 로직이 여기에...
-        #    get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
-        #    input_messages_key = "question",
-        #    history_messages_key = "history"
-        #)
 
         # 호출!
         #return self.__run_qa_chain( question, user_var, rag_chain, run_type )
-        # return self.agent.invoke( question )
+        result = self.agent.invoke( {
+            "messages": [
+                ("user", question)
+            ]
+        })
+
+        # # create_agent는 보통 {"messages": [...]} 형태로 반환합니다.
+        # if isinstance(result, dict) and "messages" in result and result["messages"]:
+        #     last_msg = result["messages"][-1]
+        #     return getattr(last_msg, "content", str(last_msg))
+
+        # return str(result)
+        return result
 
     @traceable
     async def run_qa_async(self, question:str, user_var:dict):

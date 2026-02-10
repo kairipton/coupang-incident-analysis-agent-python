@@ -3,9 +3,10 @@ from fastapi.responses import StreamingResponse
 import asyncio
 from langsmith import traceable
 
-from GameManager import GameManager
+#from GameManager import GameManager
 from Utils import User
-import AI.Agent as Agent
+from AI.Agent import Agent
+#import AI.Agent as Agent
 import Utils.Utils as Utils
 
 
@@ -38,10 +39,10 @@ def login(uid:str):
     
     #return {"message": f"{user.uid}님 환영합니다."}
 
-    welcome_msg = GameManager.get_welcome_msg(user)
-    user.history.add_ai_message( welcome_msg )
+    #welcome_msg = GameManager.get_welcome_msg(user)
+    #user.history.add_ai_message( welcome_msg )
 
-    return {"message": welcome_msg, "o2": user.o2, "phase": user.phase}
+    return {"message": f"{uid}님이 로그인 했습니다.", "o2": user.o2, "phase": user.phase}
 
 @router.get("/logout")
 def logout(uid:str):
@@ -75,28 +76,14 @@ def userchat(uid:str, message: str):
     print( f"[{uid}의 질문]: {message}" )
 
     user = User.DB.get_or_make_user( uid )
-    agent = Agent()
-    agent.set_retriever( vector_db.as_retriever( k=6 ) )
-    agent.set_session_history( uid, User.DB.get_history )
+    agent = Agent( vector_db.as_retriever( k=6 ), uid, User.DB.get_history )
 
-    res = agent.run_qa( message, { "o2": user.o2, "phase" : user.phase } )
-    is_success = "||SUCCESS||" in str(res)
+    res = agent.run_qa( message )
     ai_message = str(res)
-    print( f"AI의 답변 -> {is_success}: {res}" )
-
-    welcome_msg = GameManager.phase_process( user, is_success )
-    print( f"현재 산소량: {user.o2}, 현재 페이즈: {user.phase}" )
-
-    # 현재 페이즈를 클리어 해서 환영 메세지가 있을 경우 마지막 AI메시지 제거하고, 환영 메세지로 대체
-    if welcome_msg != "":
-        user.history.messages.pop()
-        ai_message = welcome_msg
-        user.history.add_ai_message( welcome_msg )
+    print( f"AI의 답변 -> {res}" )
 
     return {
          "message": f"{ai_message}", 
-         "o2": f"{user.o2}", 
-         "phase": f"{user.phase}"
     }
 
 @traceable
@@ -114,9 +101,7 @@ async def userchat_async(uid:str, message: str):
 
     # 1. 유저 및 에이전트 준비
     user = User.DB.get_or_make_user( uid )
-    agent = Agent()
-    agent.set_retriever( vector_db.as_retriever( k=6 ) )
-    agent.set_session_history( uid, User.DB.get_history )
+    agent = Agent( vector_db.as_retriever( k=6 ), uid, User.DB.get_history )
 
     # 2. 비동기 제너레이터 함수 정의 (여기서 로직과 출력을 동시에 처리)
     async def response_generator():
@@ -146,21 +131,21 @@ async def userchat_async(uid:str, message: str):
         clean_msg = full_answer.replace("||SUCCESS||", "").replace("||FAIL||", "")
 
         # 페이즈가 넘어갈 경우 페이즈 시작 메세지가 리턴 됨
-        welcome_msg = GameManager.phase_process( user, is_success )
+        #welcome_msg = GameManager.phase_process( user, is_success )
         print( f"현재 산소량: {user.o2}, 현재 페이즈: {user.phase}" )
 
         # 산소량, 페이즈 정보를 포함.
-        welcome_msg = f"||O:{user.o2}||" + f" ||P:{user.phase}||" + welcome_msg
+        #welcome_msg = f"||O:{user.o2}||" + f" ||P:{user.phase}||" + welcome_msg
 
         # 페이즈 시작 메세지가 있을 경우 ai 대화 내역에 해당 메세지를 넣고, 없으면 ai 메세지 그대로 사용
-        if welcome_msg != "":
-            user.history.add_ai_message( welcome_msg )
+        #if welcome_msg != "":
+        #    user.history.add_ai_message( welcome_msg )
 
-            msg = f"\n\n{welcome_msg}"
-            for c in msg:
-                yield c
-        else:
-            user.history.add_ai_message( clean_msg )
+        #    msg = f"\n\n{welcome_msg}"
+        #    for c in msg:
+        #        yield c
+        #else:
+        user.history.add_ai_message( clean_msg )
 
     # 3. StreamingResponse로 반환 (Content-Type: text/event-stream)
     return StreamingResponse(response_generator(), media_type="text/event-stream")
