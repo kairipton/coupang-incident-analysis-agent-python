@@ -1,0 +1,30 @@
+# docker-compose.yml: "컨테이너를 어떻게 띄울지"를 적는 실행 계획서
+# Portainer에서도 보통 이 파일 내용(Compose)을 그대로 붙여서 Stack으로 배포합니다.
+
+version: "3.8"
+
+services:
+  api:
+    # 1) build: 이 폴더의 Dockerfile로 이미지를 만들고, 그 이미지로 컨테이너를 띄웁니다.
+    build: .
+
+    # 2) 컨테이너 이름(선택). 안 적으면 compose가 자동으로 이름을 만듭니다.
+    container_name: fastapi-api
+
+    # 3) 포트 매핑: "호스트(서버)포트:컨테이너포트"
+    # - 외부(유니티/브라우저)에서 서버IP:8100 으로 접속하면,
+    #   컨테이너 내부의 8100 포트로 연결됩니다.
+    ports:
+      - "8100:8100"
+
+    # 4) 재시작 정책(선택이지만 운영에서 유용)
+    # - unless-stopped: 서버 재부팅/도커 재시작 시 자동으로 다시 올라오게 함
+    restart: unless-stopped
+
+    # 5) (선택) 환경변수: 필요해질 때 여기에 추가합니다.
+    # environment:
+    #   - SOME_KEY=SOME_VALUE
+
+    # 6) (선택) 볼륨: 파일/DB 데이터를 컨테이너 밖에 보존하고 싶을 때 사용합니다.
+    # volumes:
+    #   - ./data:/app/data

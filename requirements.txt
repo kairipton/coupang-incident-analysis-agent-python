@@ -1,0 +1,23 @@
+fastapi==0.128.0
+uvicorn==0.40.0
+
+# 랭체인 메인 (체인 생성 함수 포함)
+langchain
+
+# 핵심 코어 및 커뮤니티 (로더 등)
+langchain-core
+langchain-community
+langchain-classic
+
+# 모델 및 DB 연동
+langchain-openai
+langchain-chroma
+
+# 텍스트 분할 도구
+langchain-text-splitters
+
+# 기타 필수 의존성
+chromadb
+openai
+tiktoken
+python-dotenv
