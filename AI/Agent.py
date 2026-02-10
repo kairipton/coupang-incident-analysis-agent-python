@@ -24,9 +24,6 @@ class GameResponse(BaseModel):
 
 class Agent:
 
-    # 질문 변환 맵
-    question_transform_map = ["주인공 -> 플레이어", "피 -> 체력", "달면 -> 떨어지면"]
-
     def __init__(self, retriever:VectorStore.VectorStoreRetriever, session_id:str, get_session_history_func:History.BaseChatMessageHistory):
         """
         Args:
@@ -45,49 +42,28 @@ class Agent:
         self.session_id: str = session_id
         self.get_session_history: History.BaseChatMessageHistory = get_session_history_func
 
-        # Json규격 답변으로 고정 시킬때.
-        # 생성자를 직접 쓰고 변수들을 직접 정한다.
         self.qa_prompt = Prompt.PromptTemplate.from_template("""
 
-
+            프롬프트는 변경중이라네...
+                                                             
             {input_result_prompt}
 
-            # [CURRENT STATUS]
-            - 산소 잔여량: {o2}
-            - 현재 진행 단계: {phase}
-
-            # [MEMORY DATA]
-            **[Phase {phase}] 정보만 사용하십시오.**
             {document}
+                                                             
+            {agent_scratchpad}
 
-            [이전 기록]: {history}
-            [엔지니어 입력]: {question}
 
             """,
         )
 
+        # 에이전트
+        self.agent = create_agent(
+            llm = self.llm,
+            tools = Tools.tool,
+            system_prompt=self.qa_prompt
+        )
 
-
-    def set_retriever(self, retriever:VectorStore.VectorStoreRetriever) -> None:
-        """
-        리트리버 설정 및 변경
-
-        Args:
-            retriever: 문서 검색기 지정
-        """
-        self.retriever = retriever
-
-    def set_session_history(self, session_id:str, get_session_history_func:History.BaseChatMessageHistory) -> None:
-        """
-        세션 대화 기록 함수 설정 및 변경
-
-        Args:
-            session_id: 세션 ID 지정
-            get_session_history_func: 세션 ID로 대화 기록을 가져오는 함수 지정
-        """
-        self.session_id = session_id
-        self.get_session_history = get_session_history_func
-
+        
     @traceable
     def run_qa(self, question:str, user_var:dict, run_type:int=0):
         """
@@ -112,15 +88,16 @@ class Agent:
             raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
  
         # 체인 만들고
-        rag_chain = Runnable.RunnableWithMessageHistory(
-            runnable = self.final_chain, # 최종 체인 로직이 여기에...
-            get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
-            input_messages_key = "question",
-            history_messages_key = "history"
-        )
+        #rag_chain = Runnable.RunnableWithMessageHistory(
+        #    runnable = self.final_chain, # 최종 체인 로직이 여기에...
+        #    get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
+        #    input_messages_key = "question",
+        #    history_messages_key = "history"
+        #)
 
         # 호출!
-        return self.__run_qa_chain( question, user_var, rag_chain, run_type )
+        #return self.__run_qa_chain( question, user_var, rag_chain, run_type )
+        # return self.agent.invoke( question )
 
     @traceable
     async def run_qa_async(self, question:str, user_var:dict):
@@ -144,16 +121,17 @@ class Agent:
         if self.retriever is None:
             raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
  
-        # 체인 만들고
-        rag_chain = Runnable.RunnableWithMessageHistory(
-            runnable = self.final_chain, # 최종 체인 로직이 여기에...
-            get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
-            input_messages_key = "question",
-            history_messages_key = "history"
-        )
+        # # 체인 만들고
+        # rag_chain = Runnable.RunnableWithMessageHistory(
+        #     runnable = self.final_chain, # 최종 체인 로직이 여기에...
+        #     get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
+        #     input_messages_key = "question",
+        #     history_messages_key = "history"
+        # )
 
         # 호출!
-        return await self.__run_qa_chain_async( question, user_var, rag_chain )
+        #return await self.__run_qa_chain_async( question, user_var, rag_chain )
+        return await self.agent.ainvoke( question )
     
     def __run_qa_chain(self, question:str, user_var:dict, rag_chain:Runnable.RunnableWithMessageHistory, run_type:int):
         """
