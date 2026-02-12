@@ -21,3 +21,10 @@ chromadb
 openai
 tiktoken
 python-dotenv
+
+# 키워드(BM25) 검색용
+rank-bm25
+
+# RAG 평가(RAGAS)
+ragas
+datasets
