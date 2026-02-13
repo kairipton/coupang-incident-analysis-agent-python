@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import asyncio
 
-from GameManager import GameManager
+import SystemManager
 from Utils import User
 import AI.Agent as Agent
 import Utils.Utils as Utils

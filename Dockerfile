@@ -35,4 +35,4 @@ EXPOSE 8100
 # 8) 컨테이너가 "실행"될 때 기본으로 수행할 명령입니다.
 # - 여기서는 main.py의 app(FastAPI 인스턴스)을 Uvicorn 서버로 실행합니다.
 # - 참고: python main.py로 실행해도 되지만, 컨테이너에선 보통 uvicorn 명령으로 직접 실행합니다.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8100"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8101"]

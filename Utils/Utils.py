@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 1. OpenAI 모델 및 임베딩 (langchain-openai)
@@ -81,3 +82,28 @@ def load_vector_db(remake_db=False) -> Chroma:
         print( "기존 벡터 DB 사용" )
     
     return vector_db
+
+
+def find_project_root(file_path:str):
+    # 1. 현재 이 스크립트 파일의 경로를 가져옵니다.
+    current_file_path = Path(file_path).resolve()
+    
+    # 2. 파일 이름은 빼고, 파일이 속한 '폴더' 경로만 남깁니다.
+    current_folder = current_file_path.parent
+    
+    # 3. '현재 폴더'부터 시작해서 '최상위 루트(/)'까지 하나씩 위로 올라가며 검사합니다.
+    # [현재폴더, 부모폴더, 조부모폴더...] 순서입니다.
+    for folder in [current_folder] + list(current_folder.parents):
+        
+        # 4. 해당 폴더 안에 '루트'임을 증명하는 파일이 있는지 체크합니다.
+        git_folder = folder / ".git"
+        req_file = folder / "requirements.txt"
+        
+        if git_folder.exists() or req_file.exists():
+            # 찾았다면 그 폴더 경로를 반환합니다.
+            return folder
+            
+    # 끝까지 못 찾으면 그냥 현재 폴더를 반환합니다.
+    return current_folder
+
+#PROJECT_ROOT = find_root(Path(__file__)

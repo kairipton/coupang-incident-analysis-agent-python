@@ -1,0 +1,37 @@
+### Python 관련 ###
+# 컴파일된 바이트코드 (C#의 bin, obj와 유사)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상환경 (절대 올리면 안 됨)
+.venv/
+venv/
+env/
+ENV/
+
+# 배포/패키징 관련
+dist/
+build/
+*.egg-info/
+
+### 환경 변수 및 보안 (API Key 등) ###
+.env
+.flaskenv
+
+### IDE 관련 ###
+# VS Code
+.vscode/
+# PyCharm
+.idea/
+
+### 운영체제 관련 ###
+.DS_Store
+Thumbs.db
+
+### 프로젝트 특정 (RAG/AI 개발 시) ###
+# 로그 파일
+*.log
+# 데이터베이스/벡터 DB 저장소 (필요 시 제외)
+/data/
+/db/

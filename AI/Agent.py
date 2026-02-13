@@ -9,17 +9,8 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from langchain.agents import create_agent
 from pydantic import BaseModel, Field
+import SystemManager
 import GameConfig as config
-import AI.Tools as Tools
-
-class GameResponse(BaseModel):
-    """
-    JsonOutputParser를 쓸때 사용 하던 레거시 코드.
-    스트리밍에 적합하지 않아 지금은 사용하지 않음.
-    """
-    answer: str = Field( description="플레이어에게 전달할 답변 내용 (힌트 포함)" )
-    is_success:bool = Field( description="플레이어가 올바른 코드를 입력하여 산소 공급 장치를 복구했는지 여부" )
-    
 
 class Agent:
 
@@ -42,36 +33,26 @@ class Agent:
         self.get_session_history: History.BaseChatMessageHistory = get_session_history_func
 
 
-
-
-        # self.qa_prompt = Prompt.PromptTemplate.from_template("""
-
-        #     프롬프트는 변경중이라네...
-                                                             
-        #     {input_result_prompt}
-
-        #     {document}
-                                                             
-        #     {agent_scratchpad}
-
-
-        #     """,
-        # )
-
+        
         self.agent_prompt = """
             당신은 시스템 관리자를 돕는 AI Agent 입니다.
-            현재 상황을 해결할 수 있는 도움을 주십시오.
-            
-            {agent_scratchpad}
+            사용자의 질문을 토대로 현재 상황을 해결할 수 있는 도움을 주십시오.
+            상황을 해결하기 위한 방법을 사용자에게 알려주고,
+            필요하면 tools를 호출해서 상황을 직접 해결하고 사용자에게 결과를 알려주십시오.
+
+            사용자의 질문: {question}
         """
 
         # 여기에 넣는 프롬프트는 create_agent할때 고정이다.
         # 다시 create_agent를 호출하기 전까지는 고정.
-        # 실제ㅐ 
         self.agent = create_agent(
             model = self.llm,
-            tools = Tools.all_tools,
+            tools = SystemManager.all_tools,
             system_prompt=self.agent_prompt
+        )
+
+        self.rag_chain = (
+            Runnable.Runnable
         )
 
         
@@ -99,7 +80,6 @@ class Agent:
             raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
 
         # 호출!
-        #return self.__run_qa_chain( question, user_var, rag_chain, run_type )
         result = self.agent.invoke( {
             "messages": [
                 ("user", question)

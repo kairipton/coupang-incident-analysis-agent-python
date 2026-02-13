@@ -16,6 +16,10 @@ langchain-chroma
 # 텍스트 분할 도구
 langchain-text-splitters
 
+# 랭그래프 (LangChain → LangGraph 전환용)
+langgraph==1.0.8
+langgraph-prebuilt==1.0.7
+
 # 기타 필수 의존성
 chromadb
 openai
@@ -28,3 +32,6 @@ rank-bm25
 # RAG 평가(RAGAS)
 ragas
 datasets
+
+# 랭그래프 아스키 코드로 그릴때 필요
+grandalf

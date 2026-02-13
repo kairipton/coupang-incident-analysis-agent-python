@@ -7,16 +7,19 @@ class Data:
     Attributes:
         uid (str): 사용자 ID. 초기값은 -1.
         history (ChatMessageHistory): 사용자 대화 기록.
-        o2 (int): 산소(O2) 수치. 초기값은 100.
-        last_reward (int): 마지막 보상 값. 초기값은 0.
+        cpu (int): CPU 상태. 0은 정상, 1은 비정상 상태.
+        memory (int): 메모리 사용량. 0은 정상, 1은 비정상 상태.
+        network (int): 네트워크 사용량. 0은 정상, 1은 비정상 상태.
     """
     
     def __init__(self, uid: str):
         self.uid: str = uid
         self.history = ChatMessageHistory()
-        self.o2: int = 100
-        self.phase: int = 1
-        self.last_login: datetime = datetime.now()
+
+        # 아래 값부터 0은 정상, 1은 과부하와 같은 비정상 상태로 취급함
+        self.cpu = 0
+        self.memory = 0
+        self.network = 0
 
 class DB:
     """
