@@ -21,8 +21,8 @@ builder = StateGraph(Node.State)
 # region 노드 정의
 """ 그래프에 쓰일 노드들을 정의 함"""
 builder.add_node( "question", Node.node_input_question )
-builder.add_node( "multi_query", Node.node_multiquery )
-builder.add_node( "search", Node.node_hybrid_search )
+builder.add_node( "multi_query", Node.node_multiquery_search )
+#builder.add_node( "search", Node.node_hybrid_search )
 builder.add_node( "run_qa", Node.node_run_qa )
 builder.add_node( "route_next", Node.node_route_next )
 builder.add_node( "tools", Node.node_tools )
@@ -34,7 +34,7 @@ builder.add_node( "summary", Node.node_summary_conversation )
 """ 노드 연결 시작 """
 builder.add_edge( START, "question" )
 builder.add_edge( "question", "multi_query" )
-builder.add_edge( "multi_query", "search" )
+#builder.add_edge( "multi_query", "search" )
 builder.add_edge( "search", "run_qa" )
 builder.add_conditional_edges( 
     "run_qa", 

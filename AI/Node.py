@@ -14,7 +14,9 @@ from langgraph.prebuilt import ToolNode
 from langchain_community.document_loaders import TextLoader
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
+from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.prompts import PromptTemplate
 
 import Utils.Utils as Utils
 import GameConfig as Config
@@ -31,12 +33,48 @@ llm_with_tool = llm.bind_tools( all_tools )
 
 class State(TypedDict):
     question: Annotated[str, "question"] # 원본 질문. 그래프 루프가 시작할때 입력됨.
-    multi_questions: Annotated[list, "multi_questions"] # 멀티 리트리버로 가져온 질문들.
-    documents: Annotated[list, "documents"] # 하이브리드 서치로 가져온 문서들.
+    documents: Annotated[list, "documents"] # 멀티쿼리 리트리버로 가져온 문서들.
     messages: Annotated[list, add_messages] # 대화 히스토리
     summary: Annotated[str, "summary"] # 대화 요약본. 응답 후 마지막에 갱신 됨.
 
 # region 유틸리티
+def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
+    """
+    BM25 + Vector 결과를 rank fusion(Weighted RRF)으로 결합한 하이브리드 리트리버를 반환하는 유틸 함수.
+
+    Args:
+        k (int): 각 리트리버에서 반환할 문서 수
+
+    Returns:
+        EnsembleRetriever: 하이브리드 리트리버 객체
+    """
+    k = 6
+
+    # region BM25 리트리버 준비
+    doc_path = PROJECT_ROOT / "Knowledge Base" / "tech_manual.md"
+    loader = TextLoader(str(doc_path), encoding="utf8")
+    docs = loader.load()
+
+    spliiter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
+    chunks = spliiter.split_documents( docs )
+
+    for c in chunks:
+        c.metadata[ "category" ] = "manual"
+
+    bm25_retriever = BM25Retriever.from_documents( chunks, k=k )
+    # endregion
+
+    # region Vector 리트리버 준비
+    db = Utils.load_vector_db()
+    vector_retriever = db.as_retriever( k=k )
+    # endregion
+
+    # 하이브리드(앙상블) 리트리버
+    return EnsembleRetriever(
+        retrievers = [ bm25_retriever, vector_retriever ],
+        weights = [ 0.5, 0.5 ],
+    )
+
 def __format_messages_for_summary(messages:list) -> str:
     """
     LLM과의 대화 내역을 읽기 쉬운 형태로 변환
@@ -178,70 +216,125 @@ def node_route_next(state:State):
     return "need_tools" if tool_calls else "NONE"
 
 
-def node_multiquery(state:State):
+def node_multiquery_search(state:State):
     """
     사용자의 질문을 여러개의 질문으로 변환.
 
     Returns:
         "multi_questions" 에 여러개의 질문을 넣음
     """
-
-    query = f"""
-    아래의 질문을 4개의 쿼리로 바꾸세요.
-    각 쿼리는 한줄씩, 쿼리만 출력하세요.
-
-    질문: {state["question"]}
-    """
     
-    answer = llm_with_tool.invoke( query )
-    queries = getattr( answer, "content", str(answer) )
-    multi_questions = [ state["question"] ] + queries.split( "\n" ) # extend 메서드 써도 됨 (메모리 효율)
+    # 하이브리드 서치로 잘 가져올 수 있도록,
+    # 질문을 잘 나눌수 있게 멀티쿼리를 위한 프롬프트를 작성 해야 함.
+    template = PromptTemplate.from_template( """
+        사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
+        각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
+        각 쿼리는 한줄씩, 쿼리만 출력하세요.
+                                 
+        질문: {question}
+    """)
 
-    return { "multi_questions": "\n".join( multi_questions ) }
+    mqr = MultiQueryRetriever.from_llm(
+        retriever=__get_hybrid_retriever( k=6 ),
+        llm=llm,
+        prompt=template,
+        include_original=True
+    )
+    
+    docs = mqr.invoke( state["question"] )
+
+    doc_contents = []
+    for d in docs:
+        if hasattr( d, "page_content" ):
+            doc_contents.append( d.page_content )
+
+    return { "documents": doc_contents }
 
 
-def node_hybrid_search(state:State):
-    """
-    여러개의 질문을 바탕으로 문서 검색.
+def __score_doc_with_llm(question: str, doc_text: str) -> float:
+    """질문-문서 관련도를 0~10 점수로 평가(리랭킹용)."""
 
-    Returns:
-        "documents" 에 검색된 문서들을 넣음
-    """
-    k = 6
+    doc_text = (doc_text or "").strip()
+    if not doc_text:
+        return 0.0
 
-    # region BM25 리트리버 준비
-    doc_path = PROJECT_ROOT / "Knowledge Base" / "tech_manual.md"
-    loader = TextLoader(str(doc_path), encoding="utf8")
-    docs = loader.load()
-
-    spliiter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
-    chunks = spliiter.split_documents( docs )
-
-    for c in chunks:
-        c.metadata[ "category" ] = "manual"
-
-    bm25_retriever = BM25Retriever.from_documents( chunks, k=k )
-    # endregion
-
-    # region Vector 리트리버 준비
-    db = Utils.load_vector_db()
-    vector_retriever = db.as_retriever( k=k )
-    # endregion
-
-    # 하이브리드(앙상블) 리트리버
-    hybrid_retriever = EnsembleRetriever(
-        retrievers = [ bm25_retriever, vector_retriever ],
-        weights = [ 0.5, 0.5 ],
+    prompt = (
+        "당신은 검색 결과 리랭커입니다.\n"
+        "아래 [문서]가 [질문]에 직접적으로 답하는 데 얼마나 도움이 되는지 0~10으로 점수만 출력하세요.\n"
+        "- 출력은 숫자만(예: 7.5)\n"
+        "- 추측하지 말고 문서 내용 기반으로만 평가\n\n"
+        f"[질문]\n{question}\n\n"
+        f"[문서]\n{doc_text}"
     )
 
-    docs = hybrid_retriever.invoke( state["multi_questions"] )
-    doc_contents = [d.page_content for d in docs]
-    
-    return { "documents": doc_contents } 
+    msg = llm.invoke(prompt)
+    text = str(getattr(msg, "content", msg)).strip()
+
+    # 최대한 단순 파싱: 숫자/소수점만 남김
+    filtered = "".join(ch for ch in text if (ch.isdigit() or ch == "."))
+    try:
+        score = float(filtered)
+    except ValueError:
+        score = 0.0
+
+    if score < 0:
+        return 0.0
+    if score > 10:
+        return 10.0
+    return score
+
+
+def node_multiquery_search_with_rerank(
+    state: State,
+    *,
+    top_n: int = 6,
+    max_doc_chars: int = 1600,
+):
+    """node_multiquery_search 기반 + 리랭커 적용 버전.
+
+    흐름
+    1) MultiQueryRetriever로 후보 문서들을 넉넉히 수집(Recall)
+    2) LLM으로 질문-문서 관련도 점수화(Rerank)
+    3) 상위 top_n개만 documents로 반환(Precision)
+
+    Returns:
+        "documents": 리랭크 후 상위 문서의 page_content 리스트
+    """
+
+    template = PromptTemplate.from_template(
+        """
+        사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요.
+        각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
+        각 쿼리는 한줄씩, 쿼리만 출력하세요.
+
+        질문: {question}
+        """
+    )
+
+    mqr = MultiQueryRetriever.from_llm(
+        retriever=__get_hybrid_retriever(k=6),
+        llm=llm,
+        prompt=template,
+        include_original=True,
+    )
+
+    question = state["question"]
+    candidate_docs = list(mqr.invoke(question))
+
+    scored: list[tuple[float, str]] = []
+    for d in candidate_docs:
+        text = getattr(d, "page_content", None)
+        if not text:
+            continue
+        text = str(text)
+        if len(text) > max_doc_chars:
+            text = text[:max_doc_chars] + "\n... (truncated)"
+        score = __score_doc_with_llm(question, text)
+        scored.append((score, text))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top_texts = [t for _, t in scored[: max(1, top_n)]]
+    return {"documents": top_texts}
 
 
 # endregion
-
-state = node_multiquery( State( question="계란 후라이 하는 방법?" ) )
-node_hybrid_search( state )
-
