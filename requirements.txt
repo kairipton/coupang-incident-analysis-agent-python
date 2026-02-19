@@ -35,3 +35,6 @@ datasets
 
 # 랭그래프 아스키 코드로 그릴때 필요
 grandalf
+
+# Cross-Encoder 기반 리랭킹(문서-질문 쌍 점수화)
+sentence-transformers

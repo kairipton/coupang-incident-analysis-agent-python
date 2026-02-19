@@ -2,6 +2,12 @@ import os
 import sys
 import json
 from pathlib import Path
+
+# `@lru_cache` 데코레이터 설명
+# - 파이썬의 함수 결과 캐시(메모이제이션) 기능입니다.
+# - 같은 인자로 함수를 다시 부르면, 내부 계산을 다시 하지 않고 이전 결과를 그대로 돌려줍니다.
+# - 여기서는 "리랭커 모델 로딩"을 매 호출마다 하지 않게 하려고 사용합니다.
+from functools import lru_cache
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 import dotenv
@@ -17,6 +23,10 @@ from langchain_classic.retrievers import EnsembleRetriever
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
+from sentence_transformers import CrossEncoder
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from datasets import Dataset
 
 import Utils.Utils as Utils
 import GameConfig as Config
@@ -36,6 +46,7 @@ class State(TypedDict):
     documents: Annotated[list, "documents"] # 멀티쿼리 리트리버로 가져온 문서들.
     messages: Annotated[list, add_messages] # 대화 히스토리
     summary: Annotated[str, "summary"] # 대화 요약본. 응답 후 마지막에 갱신 됨.
+    reference: NotRequired[Annotated[str, "reference answer"]] # 평가용 정답. 라이브에서는 안쓰임.
 
 # region 유틸리티
 def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
@@ -119,6 +130,27 @@ def __format_messages_for_summary(messages:list) -> str:
         formatted_list.append(f"{role}: {content}")
     
     return "\n".join(formatted_list)
+
+@lru_cache(maxsize=1)
+def __get_cross_encoder_reranker():
+
+    """
+    Cross-Encoder 리랭커 모델을 1회만 로딩해서 재사용.
+    """
+
+    """
+    Cross-Encoder는 (질문, 문서) 쌍을 **함께** 입력으로 받아서 점수를 직접 예측합니다.
+    즉 "질문과 문서를 각각 임베딩"해서 유사도를 보는 방식(bi-encoder)과 다르게,
+    두 텍스트 사이의 상호작용을 모델이 바로 보면서 점수화하므로 리랭킹 품질이 잘 나오는 편입니다.
+
+    주의: 처음 로딩 시 모델 다운로드/로딩 비용이 있고, 문서 개수만큼 쌍을 점수화하므로
+    후보 문서 수가 많을수록 시간이 늘어납니다.
+    """
+    model_name = Config.cross_encoder_rerank_model_name
+
+    device = Config.cross_encoder_device
+
+    return CrossEncoder(model_name, device=device)
 # endregion
 
 # region 노드 정의
@@ -218,7 +250,8 @@ def node_route_next(state:State):
 
 def node_multiquery_search(state:State):
     """
-    사용자의 질문을 여러개의 질문으로 변환.
+    사용자의 질문을 여러개의 질문으로 변환(Multi-Query)하여, 
+    앙상블 리트리버(Hybrid Search)를 이용해 RAG 검색 결과를 가져옴
 
     Returns:
         "multi_questions" 에 여러개의 질문을 넣음
@@ -234,6 +267,12 @@ def node_multiquery_search(state:State):
         질문: {question}
     """)
 
+    # MultiQueryReriever는 멀티 쿼리와 리트리버를 이용한 검색을 한큐에 해버린다.
+    # 이때 리트리트가 앙상블 리트리버라면 하이브리드 개념상 하이브리드 서치이므로,
+    # Multi Query + Hybrid Search가 한큐에 되는 셈.
+    # 다만, 멀티 쿼리로 질문이 5개가 된 경우, k가 6개라면, 질문당 문서를 6개를 가져오게 되는데,
+    # 5 * 6 = 최대 30개의 문서가 검색될 수 있고, 이 문서를 전부 프롬프트로 날리면 토큰 사용량이 너무 커진다.
+    # 그러므로 검색 후 적절히 걸러주는게 좋다. (Rerank 등..)
     mqr = MultiQueryRetriever.from_llm(
         retriever=__get_hybrid_retriever( k=6 ),
         llm=llm,
@@ -248,93 +287,90 @@ def node_multiquery_search(state:State):
         if hasattr( d, "page_content" ):
             doc_contents.append( d.page_content )
 
-    return { "documents": doc_contents }
+    reranker = __get_cross_encoder_reranker()
 
+    # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
+    # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
+    pairs = [(state["question"], doc) for doc in doc_contents]
+    scores = reranker.predict( pairs )
 
-def __score_doc_with_llm(question: str, doc_text: str) -> float:
-    """질문-문서 관련도를 0~10 점수로 평가(리랭킹용)."""
+    # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
+    # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
+    scores_as_float = [float(s) for s in scores]
 
-    doc_text = (doc_text or "").strip()
-    if not doc_text:
-        return 0.0
+    # zip은 두개 리스트가 가진 원소를 하나씩 묶어 튜플로 만들어줌.
+    # 다만, zip으로 묶을 준비만 하고, 실제 리스트로 만들려면 list로 변환 해야 함.
+    # 결과적으로 튜플(score, doc) 리스트가 생김.
+    score_doc = list( zip(scores_as_float, doc_contents) )
+    
+    # 리스트가 가진 튜플의 첫번째 값을 키로 사용 하여 정렬.
+    # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
+    score_doc.sort( key=lambda x: x[0], reverse=True )
 
-    prompt = (
-        "당신은 검색 결과 리랭커입니다.\n"
-        "아래 [문서]가 [질문]에 직접적으로 답하는 데 얼마나 도움이 되는지 0~10으로 점수만 출력하세요.\n"
-        "- 출력은 숫자만(예: 7.5)\n"
-        "- 추측하지 말고 문서 내용 기반으로만 평가\n\n"
-        f"[질문]\n{question}\n\n"
-        f"[문서]\n{doc_text}"
-    )
+    # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
+    top_scored = score_doc[: max(1, 5)]
 
-    msg = llm.invoke(prompt)
-    text = str(getattr(msg, "content", msg)).strip()
+    top_text = [text for (_, text) in top_scored]
 
-    # 최대한 단순 파싱: 숫자/소수점만 남김
-    filtered = "".join(ch for ch in text if (ch.isdigit() or ch == "."))
-    try:
-        score = float(filtered)
-    except ValueError:
-        score = 0.0
+    return { "documents" : top_text }
 
-    if score < 0:
-        return 0.0
-    if score > 10:
-        return 10.0
-    return score
-
-
-def node_multiquery_search_with_rerank(
-    state: State,
-    *,
-    top_n: int = 6,
-    max_doc_chars: int = 1600,
-):
-    """node_multiquery_search 기반 + 리랭커 적용 버전.
-
-    흐름
-    1) MultiQueryRetriever로 후보 문서들을 넉넉히 수집(Recall)
-    2) LLM으로 질문-문서 관련도 점수화(Rerank)
-    3) 상위 top_n개만 documents로 반환(Precision)
-
-    Returns:
-        "documents": 리랭크 후 상위 문서의 page_content 리스트
+def node_evaluate(state:State):
+    """
+    LLM의 답변을 평가함. (RAGAS)
+    라이브에서 쓰지 말 것.
     """
 
-    template = PromptTemplate.from_template(
-        """
-        사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요.
-        각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
-        각 쿼리는 한줄씩, 쿼리만 출력하세요.
+    # 평가 데이터
+    q = state["question"]
+    a = state["messages"][-1].content
+    c = state.get( "documents", [] )
+    r = state.get( "reference", "" )
 
-        질문: {question}
-        """
+    if not c or not a:
+        return { "RAGAS 불가능. 질문이 없거나 질문에 사용된 문서가 없음" }
+    
+    # RAGAS 포맷에 맞게 데이터 구성
+    data = {
+        "user_input" : [q],
+        "response": [a],
+        "retrieved_contexts": [c],
+        "reference": [r]
+    }
+    dataset = Dataset.from_dict( data )
+
+
+    # 평가 시작
+    print("\n[RAGAS 평가 진행 중...]")
+    metrics = [
+        faithfulness, # 충실도
+        answer_relevancy, # 답변 관련성
+        context_precision
+    ]
+
+    # evaluate 함수는 내부적으로 LLM(기본값 OpenAI)을 사용하여 점수를 매깁니다.
+    # 커스텀 LLM을 쓰고 싶다면 metrics 초기화 시 llm을 바인딩해야 합니다.
+    result = evaluate( 
+        dataset, 
+        metrics=metrics,
+        raise_exceptions=False # 에러가 났을떄 그래프 전체가 죽는걸 방지함
     )
 
-    mqr = MultiQueryRetriever.from_llm(
-        retriever=__get_hybrid_retriever(k=6),
-        llm=llm,
-        prompt=template,
-        include_original=True,
-    )
 
-    question = state["question"]
-    candidate_docs = list(mqr.invoke(question))
+    # 결과 파싱
+    score_df = result.to_pandas()
+    score_dict = score_df.to_dict( "records" )[0]
 
-    scored: list[tuple[float, str]] = []
-    for d in candidate_docs:
-        text = getattr(d, "page_content", None)
-        if not text:
-            continue
-        text = str(text)
-        if len(text) > max_doc_chars:
-            text = text[:max_doc_chars] + "\n... (truncated)"
-        score = __score_doc_with_llm(question, text)
-        scored.append((score, text))
+    print(f"\n[RAGAS 평가 결과] {score_dict}")
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top_texts = [t for _, t in scored[: max(1, top_n)]]
-    return {"documents": top_texts}
+    return { "ragas_score": score_dict }
 
 
 # endregion
+
+# state = State( {
+#     "question": "1+1은 뭔가요?",
+#     "messages": [ AIMessage( content="1+1은 2입니다." ) ],
+#     "documents": [ "1. 덧셈은 두 수를 더하는 연산입니다.", "2. 1과 1을 더하면 2가 됩니다." ],
+#     "reference": "2"
+# } )
+# result = node_evaluate( state )
