@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import add_messages
 from langgraph.graph import StateGraph, START, END 
 from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.memory import MemorySaver
 
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
@@ -27,6 +28,7 @@ builder.add_node( "run_qa", Node.node_run_qa )
 builder.add_node( "route_next", Node.node_route_next )
 builder.add_node( "tools", Node.node_tools )
 builder.add_node( "summary", Node.node_summary_conversation )
+builder.add_node( "evaluate", Node.node_evaluate )
 # endregion
 
 
@@ -34,8 +36,7 @@ builder.add_node( "summary", Node.node_summary_conversation )
 """ 노드 연결 시작 """
 builder.add_edge( START, "question" )
 builder.add_edge( "question", "multi_query" )
-#builder.add_edge( "multi_query", "search" )
-builder.add_edge( "search", "run_qa" )
+builder.add_edge( "multi_query", "run_qa" )
 builder.add_conditional_edges( 
     "run_qa", 
     Node.node_route_next,
@@ -48,15 +49,19 @@ builder.add_edge( "tools", "run_qa" )
 builder.add_edge( "summary", END )
 # endregion
 
-graph = builder.compile()
+memory = MemorySaver()
+graph = builder.compile( checkpointer=memory )
 print( graph.get_graph().draw_ascii() )
 
-question = "안녕하세요. 반가워요. 1+1은 뭔가요? 가능하면 도구를 써주시고, 답변 하실때 도구를 쓰셨다면 어떤 도구를 썼는지 알려주세요."
-result = graph.invoke( { 
+
+config = { "configurable" : { "thread_id" : "test_uid" } }
+
+question = "고객 정보가 얼마나 유출 됐나요?"
+result = graph.invoke({ 
     "messages" : [ 
         ( "user", question ) 
     ]
-} )
+}, config=config )
 
 # 0은 사용자의 입력, -1이 대체로 AI의 답변이지만, 도구사용을 마지막으로 했을 경우 메세지가 아닐 수 있다.
 print( result["messages"][0] )

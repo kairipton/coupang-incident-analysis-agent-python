@@ -2,11 +2,8 @@ import os
 import sys
 import json
 from pathlib import Path
+import ast
 
-# `@lru_cache` 데코레이터 설명
-# - 파이썬의 함수 결과 캐시(메모이제이션) 기능입니다.
-# - 같은 인자로 함수를 다시 부르면, 내부 계산을 다시 하지 않고 이전 결과를 그대로 돌려줍니다.
-# - 여기서는 "리랭커 모델 로딩"을 매 호출마다 하지 않게 하려고 사용합니다.
 from functools import lru_cache
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
@@ -25,7 +22,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from sentence_transformers import CrossEncoder
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from ragas.metrics import faithfulness, answer_relevancy, context_precision, ContextUtilization
 from datasets import Dataset
 
 import Utils.Utils as Utils
@@ -47,6 +44,7 @@ class State(TypedDict):
     messages: Annotated[list, add_messages] # 대화 히스토리
     summary: Annotated[str, "summary"] # 대화 요약본. 응답 후 마지막에 갱신 됨.
     reference: NotRequired[Annotated[str, "reference answer"]] # 평가용 정답. 라이브에서는 안쓰임.
+    last_tool: NotRequired[Annotated[str, "last tool name"]] # 마지막으로 실행된 도구 이름(라우팅용)
 
 # region 유틸리티
 def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
@@ -62,15 +60,16 @@ def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
     k = 6
 
     # region BM25 리트리버 준비
-    doc_path = PROJECT_ROOT / "Knowledge Base" / "tech_manual.md"
-    loader = TextLoader(str(doc_path), encoding="utf8")
-    docs = loader.load()
+    spliter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
 
-    spliiter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
-    chunks = spliiter.split_documents( docs )
+    # doc_path = PROJECT_ROOT / "Knowledge Base" / "tech_manual.md"
+    # loader = TextLoader(str(doc_path), encoding="utf8")
+    # docs = loader.load()
+    # chunks = spliter.split_documents( docs )
+    chunks = spliter.split_documents( Utils.get_documents() )
 
     for c in chunks:
-        c.metadata[ "category" ] = "manual"
+        c.metadata[ "category" ] = "docs"
 
     bm25_retriever = BM25Retriever.from_documents( chunks, k=k )
     # endregion
@@ -185,23 +184,24 @@ def node_run_qa(state: State):
     """
 
     prompt = f"""
-        당신은 "시스템 엔지니어" 를 도와주는 AI 어시스턴트 입니다.
-        "시스템 엔지니어" 는 사용자를 말합니다.
-        사용자는 현재 발생한 문제를 해결하기 위해 당신에게 [질문]합니다.
-        주어진 [정보]를 바탕으로 사용자에게 대답해주세요.
+        당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
 
         [질문]
-        {state["multi_questions"]}
+        {state["question"]}
 
         [정보] 
         {state["documents"]}
-        
-        [대화 내역]
-        {state["messages"]}
     """
 
+    # 대화 내역은 프롬프트에 포함시키지 않고 따로 붙힌다.
+    # state["messages"]에는 AIMessage,HumanMessage, ToolMessage와 같은 객체들을 리스트로 들고 있는데,
+    # fstring으로 붙히게 되면 tostring 으로 처리 한 다음 치환 되기 때문에
+    # 결국 리스트 자체가 tostring이 되어 버려 의미를 알 수 없게 되어 버림
+    # 리스트의 tostring 모양 자체는 [AIMessage(content="..."), HumanMessage(content="...")] 이런식으로 되어서 문제가 없는 것 처럼 보일 수 있음
+    # 따라서, 시스템 프롬프트를 먼저 만들고, 이후 대화 내역을 뒤로 붙혀서 리스트를 tostring 처리 없이 온전히 붙히는게 좋음.
+    msg = [SystemMessage(content=prompt)] + state["messages"]
 
-    answer = llm_with_tool.invoke( prompt )
+    answer = llm_with_tool.invoke( msg )
     return { "messages" : [answer] }
 
 
@@ -254,7 +254,7 @@ def node_multiquery_search(state:State):
     앙상블 리트리버(Hybrid Search)를 이용해 RAG 검색 결과를 가져옴
 
     Returns:
-        "multi_questions" 에 여러개의 질문을 넣음
+        "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
     """
     
     # 하이브리드 서치로 잘 가져올 수 있도록,
@@ -314,6 +314,8 @@ def node_multiquery_search(state:State):
 
     return { "documents" : top_text }
 
+
+
 def node_evaluate(state:State):
     """
     LLM의 답변을 평가함. (RAGAS)
@@ -321,39 +323,81 @@ def node_evaluate(state:State):
     """
 
     # 평가 데이터
-    q = state["question"]
-    a = state["messages"][-1].content
-    c = state.get( "documents", [] )
-    r = state.get( "reference", "" )
+    # (주의) 사용자가 요청한 대로 "최종 답변 메시지 추출" 로직(#2)은 여기서 개선하지 않습니다.
+    question = state.get("question", "")
+    answer = state["messages"][-1].content if state.get("messages") else ""
+    contexts = state.get("documents", [])
+    reference = state.get("reference", "")
 
-    if not c or not a:
-        return { "RAGAS 불가능. 질문이 없거나 질문에 사용된 문서가 없음" }
+    # State를 더럽히지 않기 위해, 평가 결과는 state에 저장하지 않고 출력만 합니다.
+    # (그래프 노드 반환값은 빈 dict로 처리)
+    if not question or not contexts or not answer:
+        print("[RAGAS] 스킵: question/answer/documents 중 하나가 비어있음")
+        return {}
+
+    # contexts는 list[str] 형태가 안전합니다.
+    # (Document 객체나 None 등이 섞이면 ragas 내부에서 깨질 수 있으므로 문자열로 정규화)
+    contexts = [str(c) for c in contexts if c]
+    if not contexts:
+        print("[RAGAS] 스킵: retrieved_contexts가 비어있음")
+        return {}
     
     # RAGAS 포맷에 맞게 데이터 구성
+    # - reference(정답)가 있는 경우에만 reference 기반 메트릭(context_precision)을 포함하는 쪽이 안전
     data = {
-        "user_input" : [q],
-        "response": [a],
-        "retrieved_contexts": [c],
-        "reference": [r]
+        "user_input": [question],
+        "response": [answer],
+        "retrieved_contexts": [contexts],
     }
+
+    # 답변이 있다면 data에 reference(정답)도 포함.
+    # 문맥 정밀도(context_precision), 문맥 재현율(context_recall)은 정답이 반드시 필요 하지만
+    # 충실도(faithfulness), 답변 관련성(answer_relevancy)은 reference가 없어도 됨.
+    # 그러므로, 정답이 입력이 없을 수 있음.
+    # 문맥 활용도(context_utilization)도 정답이 필요하지 않음.
+    has_reference = bool(str(reference).strip())
+    if has_reference:
+        data["reference"] = [str(reference)]
+
+    # RAGAS 개발진은 HuggingFace의 datasets 라이브러리 구조를 채점용 입력 포맷으로 강제해뒀음.
     dataset = Dataset.from_dict( data )
 
-
     # 평가 시작
+    # metrics는 평가 항목 리스트를 나타내며, ragas에서 미리 정의된 개체들로 사용함.
     print("\n[RAGAS 평가 진행 중...]")
     metrics = [
-        faithfulness, # 충실도
-        answer_relevancy, # 답변 관련성
-        context_precision
+        faithfulness, # 충실도: 답변이 컨텍스트에 근거하는가?
+        answer_relevancy, # 답변 관련성: 질문에 제대로 답했는가?
     ]
 
-    # evaluate 함수는 내부적으로 LLM(기본값 OpenAI)을 사용하여 점수를 매깁니다.
-    # 커스텀 LLM을 쓰고 싶다면 metrics 초기화 시 llm을 바인딩해야 합니다.
-    result = evaluate( 
-        dataset, 
-        metrics=metrics,
-        raise_exceptions=False # 에러가 났을떄 그래프 전체가 죽는걸 방지함
-    )
+    # reference(정답)가 있을 때만 context_precision을 포함
+    # reference가 없으면 "정답 기반" 평가가 의미가 약해지므로 context_utilization(무참조)을 사용
+    metrics.append(context_precision if has_reference else ContextUtilization())
+
+    # 단순 버전: LangChain 기반 wrapper 사용
+    # - ragas가 temperature를 0.01로 강제할 수 있어, bypass_temperature=True로 우회합니다.
+    try:
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.embeddings import LangchainEmbeddingsWrapper
+        from langchain_openai import OpenAIEmbeddings
+
+        embedding_model = Config.embedding_model_name
+        embeddings = OpenAIEmbeddings(model=embedding_model)
+
+        # 평가용 LLM은 답변 생성용과 분리하는 게 안전합니다.
+        # gpt-5/o-계열 등 temperature 제약 모델을 위해 temperature=1로 고정.
+        eval_llm = ChatOpenAI(model=Config.llm_model_name, temperature=1)
+
+        result = evaluate(
+            dataset, # 평가할 데이터
+            metrics=metrics, # 평가 항목
+            llm=LangchainLLMWrapper(eval_llm, bypass_temperature=True),
+            embeddings=LangchainEmbeddingsWrapper(embeddings),
+            raise_exceptions=False,
+        )
+    except Exception as e:
+        print(f"[RAGAS] 실패: {type(e).__name__}: {e}")
+        return {}
 
 
     # 결과 파싱
@@ -362,15 +406,7 @@ def node_evaluate(state:State):
 
     print(f"\n[RAGAS 평가 결과] {score_dict}")
 
-    return { "ragas_score": score_dict }
+    return {}
 
 
 # endregion
-
-# state = State( {
-#     "question": "1+1은 뭔가요?",
-#     "messages": [ AIMessage( content="1+1은 2입니다." ) ],
-#     "documents": [ "1. 덧셈은 두 수를 더하는 연산입니다.", "2. 1과 1을 더하면 2가 됩니다." ],
-#     "reference": "2"
-# } )
-# result = node_evaluate( state )

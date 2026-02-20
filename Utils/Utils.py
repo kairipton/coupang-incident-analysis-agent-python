@@ -1,4 +1,7 @@
+import sys
 import os
+sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
+
 import time
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,10 +14,11 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 # 기존: from langchain_community.vectorstores import Chroma (더 이상 사용 X)
 from langchain_chroma import Chroma
 
+from langchain_core.documents import Document
 from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-import Utils.Utils as Utils
 import GameConfig as Config 
 
 def load_vector_db(remake_db=False) -> Chroma:
@@ -36,12 +40,6 @@ def load_vector_db(remake_db=False) -> Chroma:
     # 벡터DB는 인덱싱 기술 덕분에 성능문제가 별로 없다고 함
     if remake_db is True or not os.path.exists( db_path ):
 
-        #rule_loader = TextLoader( f"./Knowledge Base/{Config.game_rule_md_name}", encoding="utf8" )
-        manual_loader = TextLoader( f"./Knowledge Base/{Config.manual_md_name}", encoding="utf8" )
-        #rule = rule_loader.load()
-        manual = manual_loader.load()
-        vector_db = None
-
         # 임베딩 한다 라는것: 벡터화 한다라는것.
         # 임베딩 하기 위한 사전 준비. 텍스트를 나누기 위한 splitter 생성.
         text_splitter = RecursiveCharacterTextSplitter(
@@ -49,21 +47,30 @@ def load_vector_db(remake_db=False) -> Chroma:
             chunk_overlap=200,
         )
 
-        # 문서 나누기.
-        #rule_doc = text_splitter.split_documents( rule )
-        manual_doc = text_splitter.split_documents( manual )
+        all_docs = []
+        extensions = [ ".txt", ".pdf" ]
+        for f in os.listdir( Config.doc_folder_path ):
 
-        #for d in rule_doc:
-        #    d.metadata = { "category" : "rule" } # 불러온 메타데이터가 날아가버림.
-        #    d.metadata[ "category" ] = "rule"
+            #if f.endswith( tuple( extensions ) ) == False:
 
-        for d in manual_doc:
-            d.metadata[ "category" ] = "manual"
+            # 문서 로드
+            #text_loader = TextLoader( f"{Config.doc_folder_path}/{f}", encoding="utf8" )
+            text_loader = PyPDFLoader( f"{Config.doc_folder_path}/{f}" )
+
+            # 청킹
+            docs = text_splitter.split_documents( text_loader.load() )
+            for d in docs:
+                #d.metadata = { "category" : "rule" } # 불러온 메타데이터가 날아가버림.
+                d.metadata[ "category" ] = "docs" # 문서의 성격별로 구분 하려면??
+
+            all_docs.extend( docs )
+
+
+        vector_db = None
 
         # 벡터 DB 생성
         vector_db = Chroma.from_documents(
-            #documents=rule_doc + manual_doc,
-            documents=manual_doc,
+            documents=all_docs,
             embedding=embedding,
             collection_name=collection_name,
             persist_directory=db_path,
@@ -83,6 +90,25 @@ def load_vector_db(remake_db=False) -> Chroma:
     
     return vector_db
 
+def get_documents() -> list[Document]:
+    """
+    문서 폴더 하위에 있는 모든 문서를 Document 리스트로 반환함
+    현재는 pdf만 됨
+
+    Returns:
+        list[Document]: 문서 리스트
+    """
+
+    all_docs: list[Document] = []
+    for f in  os.listdir( Config.doc_folder_path ):
+        if f.endswith(".pdf") == False:
+            continue
+        loader = PyPDFLoader( f"{Config.doc_folder_path}/{f}" )
+        docs = loader.load()
+        all_docs.extend( docs )
+
+    return all_docs
+            
 
 def find_project_root(file_path:str):
     # 1. 현재 이 스크립트 파일의 경로를 가져옵니다.

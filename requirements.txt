@@ -38,3 +38,6 @@ grandalf
 
 # Cross-Encoder 기반 리랭킹(문서-질문 쌍 점수화)
 sentence-transformers
+
+# PDF 파일 읽을떄 필요함. 랭체인 내부에서 쓰이는듯.
+pypdf
