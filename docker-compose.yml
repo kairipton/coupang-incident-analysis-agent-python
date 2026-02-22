@@ -9,7 +9,7 @@ services:
     build: .
 
     # 2) 컨테이너 이름(선택). 안 적으면 compose가 자동으로 이름을 만듭니다.
-    container_name: fastapi-api
+    container_name: coupang-incident-analysis-agent-api
 
     # 3) 포트 매핑: "호스트(서버)포트:컨테이너포트"
     # - 외부(유니티/브라우저)에서 서버IP:8100 으로 접속하면,
