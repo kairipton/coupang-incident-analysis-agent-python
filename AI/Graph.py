@@ -10,10 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
-import GameConfig as Config
-import SystemManager
 import Node
-from Node import llm_with_tool
 
 
 
@@ -23,10 +20,10 @@ builder = StateGraph(Node.State)
 """ 그래프에 쓰일 노드들을 정의 함"""
 builder.add_node( "question", Node.node_input_question )
 builder.add_node( "multi_query", Node.node_multiquery_search )
-#builder.add_node( "search", Node.node_hybrid_search )
-builder.add_node( "run_qa", Node.node_run_qa )
+builder.add_node( "tool_call", Node.node_tool_call )
 builder.add_node( "route_next", Node.node_route_next )
 builder.add_node( "tools", Node.node_tools )
+builder.add_node( "final_answer", Node.node_final_answer )
 builder.add_node( "summary", Node.node_summary_conversation )
 builder.add_node( "evaluate", Node.node_evaluate )
 # endregion
@@ -36,16 +33,17 @@ builder.add_node( "evaluate", Node.node_evaluate )
 """ 노드 연결 시작 """
 builder.add_edge( START, "question" )
 builder.add_edge( "question", "multi_query" )
-builder.add_edge( "multi_query", "run_qa" )
+builder.add_edge( "multi_query", "tool_call" )
 builder.add_conditional_edges( 
-    "run_qa", 
+    "tool_call", 
     Node.node_route_next,
     {
         "need_tools" : "tools",
-        "NONE": "summary"
+        "NONE": "final_answer"
     }
 )
-builder.add_edge( "tools", "run_qa" )
+builder.add_edge( "tools", "tool_call" )
+builder.add_edge( "final_answer", "summary" )
 builder.add_edge( "summary", END )
 # endregion
 

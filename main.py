@@ -21,7 +21,7 @@ from Utils import User
 import AI.Agent as Agent
 import Utils.Utils as Utils
 import GameConfig as config
-import GameAPI as API
+import UserAPI as API
 
 from fastapi.staticfiles import StaticFiles
 
@@ -91,7 +91,7 @@ def on_startup():
         #userchat("TEST", "안녕?")
 
 # "내 서버 IP로 접속하면, 게임(index.html)을 보여줘라"
-app.mount("/", StaticFiles(directory="deep-space-terminal", html=True), name="Deep Space Terminal")
+app.mount("/", StaticFiles(directory="coupang-incident-analysis-agent", html=True), name="Coupang Incident Analysis Agent")
 
 if __name__ == "__main__":
 

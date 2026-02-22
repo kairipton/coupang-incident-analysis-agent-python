@@ -1,59 +1,55 @@
 from langsmith import traceable
-from langchain_openai import ChatOpenAI
-import langchain_core.prompts as Prompt
-import langchain_core.runnables as Runnable
-import langchain_core.chat_history as History
-from langchain_community.chat_message_histories import ChatMessageHistory
-import langchain_core.vectorstores as VectorStore
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.output_parsers import JsonOutputParser
-from langchain.agents import create_agent
-from pydantic import BaseModel, Field
+from langgraph.graph import StateGraph, START, END 
+from langgraph.checkpoint.memory import MemorySaver
 import SystemManager
 import GameConfig as config
 
+import AI.Node as Node
+
 class Agent:
 
-    def __init__(self, retriever:VectorStore.VectorStoreRetriever, session_id:str, get_session_history_func:History.BaseChatMessageHistory):
+    def __init__(self,uid:str):
+
         """
         Args:
-            retriever: 문서 검색기 지정
-            session_id: 세션 ID 지정
-            get_session_history_func: 세션 ID로 대화 기록을 가져오는 함수 지정
+            uid (str): 접속 대상자의 uid. 대화중 기억력에 쓰임.
         """
 
-        # LLM
-        self.llm = ChatOpenAI( model=config.llm_model_name )
+        self.uid = uid
+        self.builder = StateGraph(Node.State)
+        self.config = { "configurable" : { "thread_id" : uid } }
+        self.memory = MemorySaver()
 
-        # 리트리버
-        self.retriever: VectorStore.VectorStoreRetriever = retriever
+        """ 그래프에 쓰일 노드들을 정의 함"""
+        self.builder.add_node( "question", Node.node_input_question )
+        self.builder.add_node( "multi_query", Node.node_multiquery_search )
+        self.builder.add_node( "tool_call", Node.node_tool_call )
+        self.builder.add_node( "route_next", Node.node_route_next )
+        self.builder.add_node( "tools", Node.node_tools )
+        self.builder.add_node( "final_answer", Node.node_final_answer )
+        self.builder.add_node( "summary", Node.node_summary_conversation )
+        self.builder.add_node( "evaluate", Node.node_evaluate ) # 평가용으로 필요시 연결해서 사용
 
-        # 대화 히스토리 변수
-        self.session_id: str = session_id
-        self.get_session_history: History.BaseChatMessageHistory = get_session_history_func
-
-
-        
-        self.agent_prompt = """
-            당신은 시스템 관리자를 돕는 AI Agent 입니다.
-            사용자의 질문을 토대로 현재 상황을 해결할 수 있는 도움을 주십시오.
-            상황을 해결하기 위한 방법을 사용자에게 알려주고,
-            필요하면 tools를 호출해서 상황을 직접 해결하고 사용자에게 결과를 알려주십시오.
-
-            사용자의 질문: {question}
-        """
-
-        # 여기에 넣는 프롬프트는 create_agent할때 고정이다.
-        # 다시 create_agent를 호출하기 전까지는 고정.
-        self.agent = create_agent(
-            model = self.llm,
-            tools = SystemManager.all_tools,
-            system_prompt=self.agent_prompt
+        """ 노드 연결 시작 """
+        self.builder.add_edge( START, "question" )
+        self.builder.add_edge( "question", "multi_query" )
+        self.builder.add_edge( "multi_query", "tool_call" )
+        self.builder.add_conditional_edges( 
+            "tool_call", 
+            Node.node_route_next,
+            {
+                "need_tools" : "tools",
+                "NONE": "final_answer"
+            }
         )
+        self.builder.add_edge( "tools", "tool_call" )
+        self.builder.add_edge( "final_answer", "summary" )
+        self.builder.add_edge( "summary", END )
 
-        self.rag_chain = (
-            Runnable.Runnable
-        )
+        self.graph = self.builder.compile( checkpointer=self.memory )
+        print( self.graph.get_graph().draw_ascii() )
+
+        pass
 
         
     @traceable
@@ -63,108 +59,79 @@ class Agent:
 
             Args:
                 question: 사용자의 질문 내용
-                user_var: 사용자의 변수 정보 딕셔너리
-                run_type: 질의 실행 방법 설정 (0: invoke, 1: stream)
-
-            Returns:
-                스트림 가능한 답변 객체
         """
 
-        if self.session_id == "":
-            raise Exception("세션 ID가 설정되지 않았습니다. set_session_history()를 먼저 호출하세요.")
-        
-        if self.get_session_history is None:
-            raise Exception("대화 기록 함수가 설정되지 않았습니다. set_session_history()를 먼저 호출하세요.")
-        
-        if self.retriever is None:
-            raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
+        if self.graph is None:
+            raise Exception("그래프가 초기화되지 않았습니다.")
 
-        # 호출!
-        result = self.agent.invoke( {
-            "messages": [
-                ("user", question)
+        return self.graph.invoke( {
+            "messages" : [
+                ( "user", question )
             ]
-        })
-
-        # # create_agent는 보통 {"messages": [...]} 형태로 반환합니다.
-        # if isinstance(result, dict) and "messages" in result and result["messages"]:
-        #     last_msg = result["messages"][-1]
-        #     return getattr(last_msg, "content", str(last_msg))
-
-        # return str(result)
-        return result
+        }, config=self.config )
 
     @traceable
-    async def run_qa_async(self, question:str, user_var:dict):
+    async def run_qa_ainvoke(self, question:str):
         """
         질의응답 실행
 
             Args:
                 question: 사용자의 질문 내용
-                user_var: 사용자의 변수 정보 딕셔너리
-
-            Returns:
-                스트림 가능한 답변 객체
         """
 
-        if self.session_id == "":
-            raise Exception("세션 ID가 설정되지 않았습니다. set_session_history()를 먼저 호출하세요.")
-        
-        if self.get_session_history is None:
-            raise Exception("대화 기록 함수가 설정되지 않았습니다. set_session_history()를 먼저 호출하세요.")
-        
-        if self.retriever is None:
-            raise Exception("리트리버가 설정되지 않았습니다. set_retriever()를 먼저 호출하세요.")
- 
-        # # 체인 만들고
-        # rag_chain = Runnable.RunnableWithMessageHistory(
-        #     runnable = self.final_chain, # 최종 체인 로직이 여기에...
-        #     get_session_history = self.get_session_history, # 대화 내역을 가져오는 메서드
-        #     input_messages_key = "question",
-        #     history_messages_key = "history"
-        # )
+        if self.graph is None:
+            raise Exception("그래프가 초기화되지 않았습니다.")
 
-        # 호출!
-        #return await self.__run_qa_chain_async( question, user_var, rag_chain )
-        return await self.agent.ainvoke( question )
+        return await self.graph.ainvoke( {
+            "messages" : [
+                ( "user", question )
+            ]
+        }, config=self.config )
     
-    def __run_qa_chain(self, question:str, user_var:dict, rag_chain:Runnable.RunnableWithMessageHistory, run_type:int):
-        """
-        질의응답 실행 내부 메서드
-        """
-        if run_type == 0:
-            return rag_chain.invoke(
-                { "question": question, "user_var" : user_var },
-
-                # configurable은 랭체인에서 쓰는 예약처럼 쓰이고, 여러가지 값이 있음.
-                # session_id도 configurable 내부에서 예약어 처럼 쓰이며, 이거는 RunnableWithMessageHistory 사용시 파라미터로 명시하여 변경 가능.
-                # RunnableWithMessageHistory에 session_id 전달. 
-                config={ "configurable": { "session_id" : self.session_id } } 
-            )
         
-        elif run_type == 1:
-            return rag_chain.stream(
-                { "question": question, "user_var" : user_var },
-                config={ "configurable": { "session_id" : self.session_id } } 
-            )
-        
-        else:
-            raise Exception( f"알 수 없는 run_type 값입니다: {run_type}" )
-
-        
-    async def __run_qa_chain_async(self, question:str, user_var:dict, rag_chain:Runnable.RunnableWithMessageHistory):
+    async def run_qa_astream(self, question:str):
         """
         질의응답 비동기 실행 내부 메서드
-        """
-        return rag_chain.astream(
-            { "question": question, "user_var" : user_var },
-            config={ "configurable": { "session_id" : self.session_id } } 
-        )
-        
 
-    @staticmethod
-    def __format_docs( docs ):
+            Args:
+                question: 사용자의 질문 내용
         """
-        리트리버로가 검색하여 가져온 문서들을 문자열 뭉탱이로 리턴함
+
+        if self.graph is None:
+            raise Exception("그래프가 초기화되지 않았습니다.")
+
+        return self.graph.astream( {
+            "messages" : [
+                ( "user", question )
+            ]
+        }, config=self.config )
+
+    async def run_qa_astream_events(self, question: str, version: str = "v2"):
         """
-        return "\n\n".join([doc.page_content for doc in docs])
+        LangGraph 실행 이벤트 스트림을 반환.
+
+        - userchat_async에서 이벤트를 받아 'final_answer' 노드의 모델 토큰만 골라
+          Unity로 스트리밍하기 위한 용도.
+
+        Args:
+            question: 사용자 질문
+            version: LangGraph 이벤트 포맷 버전(환경에 따라 'v1'/'v2')
+
+        Returns:
+            AsyncIterator[dict]: LangGraph 이벤트 스트림
+        """
+
+        if self.graph is None:
+            raise Exception("그래프가 초기화되지 않았습니다.")
+
+        payload = {
+            "messages": [
+                ("user", question)
+            ]
+        }
+
+        # LangGraph 버전에 따라 version 파라미터 지원 여부가 다를 수 있어 폴백 처리
+        try:
+            return self.graph.astream_events(payload, config=self.config, version=version)
+        except TypeError:
+            return self.graph.astream_events(payload, config=self.config)

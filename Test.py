@@ -2,17 +2,13 @@ import os
 import dotenv
 dotenv.load_dotenv()
 
-import GameAPI
+import UserAPI
 import asyncio
 from fastapi.responses import StreamingResponse
 import Utils.Utils as Utils
-
-
-# [초기화] 서버 시작 전 리소스 로드 (DB 등)
-#print("=== 시스템 초기화 중... ===")
-#vector_db = Utils.load_vector_db()
-#main.on_startup()
-#print("=== 초기화 완료 ===")
+from pprint import pprint
+from typing import Any
+from langchain_core.messages import BaseMessage, AIMessage
 
 # ----------------------------------------------------------------
 # 1. [동기 모드] 순수 Python 함수 호출 (Blocking)
@@ -24,31 +20,25 @@ def run_sync_test():
     uid = "test_user_sync"
 
     # 1. 로그인
-    welcome_pack = GameAPI.login(uid)
+    welcome_pack = UserAPI.login(uid)
+    
     print(f"\n[SYSTEM]: {welcome_pack['message']}")
 
     while True:
         user_input = input("\n[나(Sync)]: ")
         if user_input.lower() in ["exit", "quit"]:
-            GameAPI.logout(uid)
+            UserAPI.logout(uid)
             break
 
         if user_input.lower() in ["reset"]:
-            GameAPI.reset(uid)
+            UserAPI.reset(uid)
             continue
         
         # 2. 동기 함수 호출 (그냥 함수 부르듯이)
         # main.userchat은 dict를 리턴합니다.
-        response = GameAPI.userchat(uid, user_input)
-        
-        # 3. 결과 출력
-        # 동기 모드는 스트리밍이 아니므로 완성된 문장이 한 번에 옵니다.
-        ai_msg = response["message"]
-        #o2 = response["o2"]
-        #phase = response["phase"]
-        
-        print(f"[AI]: {ai_msg}")
-        #print(f"(Debug: 산소={o2}, 페이즈={phase})")
+        response = UserAPI.userchat(uid, user_input)
+
+        pprint( response["message"] )
 
 # ----------------------------------------------------------------
 # 2. [비동기 모드] 스트리밍 호출 (Non-Blocking)
@@ -60,25 +50,25 @@ async def run_async_test():
     uid = "test_user_async"
 
     # 1. 로그인 (로그인은 동기 함수지만 여기서 불러도 됨)
-    welcome_pack = GameAPI.login(uid)
+    welcome_pack = UserAPI.login(uid)
     print(f"\n[SYSTEM]: {welcome_pack['message']}")
 
     while True:
         # input()은 동기 함수라 흐름을 막지만 테스트니까 사용
         user_input = input("\n[나(Async)]: ")
         if user_input.lower() in ["exit", "quit"]:
-            GameAPI.logout(uid)
+            UserAPI.logout(uid)
             break
 
         if user_input.lower() in ["reset"]:
-            GameAPI.reset(uid)
+            UserAPI.reset(uid)
             continue
 
-        print("[AI]: ", end="", flush=True)
+        #pprint("[AI]: ", indent=2, width=100)
 
         # 2. 비동기 함수 호출 (await 필수)
         # GameAPI.userchat_async는 StreamingResponse 객체를 리턴
-        response: StreamingResponse = await GameAPI.userchat_async(uid, user_input)
+        response: StreamingResponse = await UserAPI.userchat_async(uid, user_input)
 
         # 3. 스트림 데이터 소비
         # body_iterator를 비동기 루프로 읽어옴
@@ -91,5 +81,5 @@ async def run_async_test():
         print() # 줄바꿈
 
 if __name__ == "__main__":
-    run_sync_test()
-    #asyncio.run(run_async_test())
+    #run_sync_test()
+    asyncio.run(run_async_test())

@@ -170,10 +170,9 @@ def node_input_question(state: State):
 
     return { "question": state["messages"][-1].content }
 
-def node_run_qa(state: State):
+def node_tool_call(state: State):
     """
-    LLM에게 질문을 던지고 답변을 받는 노드.
-    Multi-Query Retriever로 얻은 질문들과, Hybrid Search로 얻은 문서들이 필요함.
+    질문을 보고 도구 사용이 필요할 경우 도구 사용.
 
     LLM의 출력은 크게 두 가지 중 하나인데, 사용자가 제어하는게 아님.
     1) 도구가 필요 없으면: 그냥 자연어 답변(content)을 가진 AIMessage
@@ -185,6 +184,7 @@ def node_run_qa(state: State):
 
     prompt = f"""
         당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
+        주어진 질문과 정보를 바탕으로, 적합한 도구를 선택하여 사용하세요.
 
         [질문]
         {state["question"]}
@@ -201,8 +201,69 @@ def node_run_qa(state: State):
     # 따라서, 시스템 프롬프트를 먼저 만들고, 이후 대화 내역을 뒤로 붙혀서 리스트를 tostring 처리 없이 온전히 붙히는게 좋음.
     msg = [SystemMessage(content=prompt)] + state["messages"]
 
-    answer = llm_with_tool.invoke( msg )
-    return { "messages" : [answer] }
+    decision = llm_with_tool.invoke( msg )
+
+    # 사용할 도구가 없으면 그냥 넘김.
+    # - tool_calls가 있으면 ToolNode가 실행할 수 있도록 messages에 decision(AIMessage)을 추가
+    # - tool_calls가 없으면 여기서는 메시지를 추가하지 않고 final_answer 단계로 넘김
+    if getattr(decision, "tool_calls", None):
+        return { "messages": [decision] }
+
+    return {}
+
+def node_route_next(state:State):
+    """
+    가장 마지막 메세지에 tool_calls가 있으면 need_tools를, 없으면 "NONE"을 리턴.
+
+    Returns:
+        툴 사용이 필요하다면 "need_tools"를, 아니라면 "NONE"을 리턴.
+    """
+
+    msgs = state.get( "messages", [] )
+    last = msgs[-1] if msgs else None
+    tool_calls = getattr( last, "tool_calls", None )
+
+    return "need_tools" if tool_calls else "NONE"
+
+def node_final_answer(state: State):
+    """
+    최종 답변 노드.
+    현재 값들을 토대로 최종 답변 메세지를 생성한다.
+    """
+
+    prompt = f"""
+        당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
+        주어진 질문과 정보를 바탕으로, 최종 답변 메시지를 생성하세요.
+
+        [질문]
+        {state["question"]}
+
+        [정보] 
+        {state["documents"]}
+    """
+
+    msg = [SystemMessage(content=prompt)] + state["messages"]
+
+    # answer = llm.invoke( msg )
+    # return { "messages" : [answer] }
+
+    # 최종 답변은 스트리밍으로 생성(청크를 소비하며 content를 누적)
+    full_content = ""
+    try:
+        for chunk in llm.stream(msg):
+            if isinstance(chunk, str):
+                full_content += chunk
+            else:
+                full_content += getattr(chunk, "content", "") or ""
+    except Exception:
+        # 스트리밍 실패 시(모델/환경 이슈 등) 안전하게 단발 호출로 폴백
+        answer = llm.invoke(msg)
+        return {"messages": [answer]}
+
+    answer = AIMessage(content=full_content)
+    
+    return {"messages": [answer]}
+
 
 
 def node_summary_conversation(state: State):
@@ -233,19 +294,7 @@ def node_summary_conversation(state: State):
     return { "summary": getattr( answer, "content", str(answer) ) }
 
 
-def node_route_next(state:State):
-    """
-    가장 마지막 메세지에 tool_calls가 있으면 need_tools를, 없으면 "NONE"을 리턴.
 
-    Returns:
-        툴 사용이 필요하다면 "need_tools"를, 아니라면 "NONE"을 리턴.
-    """
-
-    msgs = state.get( "messages", [] )
-    last = msgs[-1] if msgs else None
-    tool_calls = getattr( last, "tool_calls", None )
-
-    return "need_tools" if tool_calls else "NONE"
 
 
 def node_multiquery_search(state:State):

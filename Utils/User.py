@@ -15,11 +15,7 @@ class Data:
     def __init__(self, uid: str):
         self.uid: str = uid
         self.history = ChatMessageHistory()
-
-        # 아래 값부터 0은 정상, 1은 과부하와 같은 비정상 상태로 취급함
-        self.cpu = 0
-        self.memory = 0
-        self.network = 0
+        self.last_login = datetime.now()
 
 class DB:
     """

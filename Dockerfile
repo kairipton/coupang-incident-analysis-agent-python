@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # - COPY . . 은 현재 경로의 모든 파일을 복사하지만, 
 # - 유니티 폴더가 확실히 포함되도록 아래와 같이 명시해주는 것이 안전합니다.
 COPY . .
-COPY ./deep-space-terminal /app/deep-space-terminal
+COPY ./coupang-incident-analysis-agent /app/coupang-incident-analysis-agent
 
 # 7) (문서용) 이 컨테이너가 사용할 포트를 표시합니다.
 # - 실제 포트를 여는 건 docker-compose.yml의 ports 설정입니다.

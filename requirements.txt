@@ -41,3 +41,6 @@ sentence-transformers
 
 # PDF 파일 읽을떄 필요함. 랭체인 내부에서 쓰이는듯.
 pypdf
+
+# 뉴스 검색
+tavily-python
