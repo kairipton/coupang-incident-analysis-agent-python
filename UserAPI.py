@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import asyncio
+import json
 from langsmith import traceable
 from langchain_core.messages import BaseMessage, AIMessage
 
@@ -87,10 +88,21 @@ def userchat(uid:str, message: str):
 
 @traceable
 @router.get("/userchat_async")
-async def userchat_async(uid:str, message: str):
+async def userchat_async(uid: str, message: str, emit_node: bool = True):
     """
     채팅 티키타카 (스트리밍 버전)
     - 즉시 응답(StreamingResponse)을 반환
+
+    Args:
+        uid: 사용자 ID
+        message: 사용자 메시지
+        emit_node: True면 노드 진행 이벤트를 함께 스트리밍(NDJSON)
+
+    Returns:
+        - emit_node=False(기본): 최종 답변 토큰을 raw text로 스트리밍
+        - emit_node=True: NDJSON 스트림
+            {"type":"node","node":"multi_query","status":"start"}\n
+            {"type":"token","text":"..."}\n
     """
 
     print( f"[{uid}의 질문(Stream)]: {message}" )
@@ -102,38 +114,98 @@ async def userchat_async(uid:str, message: str):
     # 2. 비동기 제너레이터 함수 정의 (여기서 로직과 출력을 동시에 처리)
     async def response_generator():
         full_answer = ""
+        current_node = None
+
+        def _ndjson(obj: dict) -> str:
+            return json.dumps(obj, ensure_ascii=False) + "\n"
 
         # LangGraph 이벤트 스트림을 받아서 final_answer 노드의 토큰만 필터링
         events = await agent.run_qa_astream_events(message)
 
         async for ev in events:
+
+            # event or type: 무슨 일이 발생 했는지. (on_chain_start, on_chain_end 등등.....)
+            ev_type = ev.get("event") or ev.get("type")
+
+            # metadata: "이 이벤트가 어떤 컨텍스트에서 발생했는지"를 담는 부가 정보
+            # - 이벤트 종류에 따라 metadata가 없을 수도 있으므로(None), 항상 dict로 맞춰서 처리
+            # - 여기서는 아래에서 그래프 노드 이름을 뽑기 위해 사용
+            #   (metadata['langgraph_node'] 또는 metadata['node'])
             metadata = ev.get("metadata") or {}
-            node_name = metadata.get("langgraph_node") or metadata.get("node")
+            
+            # 실제로 실행된 runnable/컴포넌트 이름.
+            # 이번 이벤트를 발생시킨 실제 runnable/컴포넌트 이름.
+            # RunnableSequence, PromptTemplate, ChatOpenAI, EnsembleRetriever처럼 노드 내부 구성요소 이름이 들어올 때도 있음
+            ev_name = ev.get("name")
+
+            # 이 이벤트가 속한 "그래프 노드 이름"
+            # - node_name: question/multi_query/tool_call/final_answer/summary 같은 LangGraph 노드 이름
+            # - ev_name:   노드 자체일 수도 있고, 노드 내부 구성요소(PromptTemplate/ChatOpenAI 등)일 수도 있음
+            #
+            # 목적: "노드가 바뀌는 순간"(A -> B)만 Unity로 알리고 싶음
+            # 그래서 아래처럼 '노드 자체 시작 이벤트'만 골라냅니다.
+            node_name = metadata.get("langgraph_node") or metadata.get("node")            
+
+            if emit_node:
+                # 1) 노드 전환 이벤트를 뽑는 기준
+                # - on_chain_start: 어떤 체인(=노드/내부 runnable)이 시작될 때
+                # - node_name이 있어야 "그래프의 어떤 노드인지" 알 수 있음
+                # - ev_name == node_name 인 경우만 "그래프 노드 자체"의 시작으로 간주
+                #   (예: node=multi_query, name=RunnableSequence 는 노드 내부라서 제외)
+                is_chain_start = ev_type == "on_chain_start"
+                has_node_name = bool(node_name)
+                is_graph_node_start = has_node_name and (ev_name == node_name)
+
+                if is_chain_start and is_graph_node_start:
+                    # 2) 같은 노드 이벤트는 중복 전송하지 않음
+                    if node_name != current_node:
+                        current_node = node_name
+                        # 노드에 커스텀 메타데이터를 붙여둔 경우(예: add_node(..., metadata={...}))
+                        # Unity로 함께 전달할 값을 여기서 꺼내서 포함시킬 수 있음
+                        payload = {"type": "node", "node": node_name, "status": "start"}
+
+                        unity_label = metadata.get("unity_label")
+                        if unity_label is not None:
+                            payload["meta"] = unity_label
+                            print( unity_label )
+
+                        yield _ndjson(payload)
 
             # final_answer 노드에서 생성되는 토큰만 유니티로 스트리밍
             if node_name and node_name != "final_answer":
                 continue
-
-            ev_type = ev.get("event") or ev.get("type")
             if ev_type not in ("on_chat_model_stream", "on_llm_stream"):
                 continue
 
+            # 이벤트 payload는 ev['data'] 아래에 들어오는 경우가 많음
+            # - stream 이벤트에서는 보통 data['chunk']에 "토큰 조각"(str 또는 MessageChunk 유사 객체)이 담김
             data = ev.get("data") or {}
             chunk = data.get("chunk")
 
+            # chunk가 없으면(다른 타입의 이벤트이거나 비어있으면) 토큰으로 보낼 게 없으니 스킵
             if chunk is None:
                 continue
 
+            # chunk가 str이면 그대로 사용, 객체면 .content를 꺼내서 텍스트로 변환
             text = chunk if isinstance(chunk, str) else (getattr(chunk, "content", "") or "")
+
+            # 빈 문자열이면 전송할 의미가 없어서 스킵
             if not text:
                 continue
 
             full_answer += text
             await asyncio.sleep(0.01)
-            yield text
 
-    # 3. StreamingResponse로 반환 (Content-Type: text/event-stream)
-    return StreamingResponse(response_generator(), media_type="text/event-stream")
+            if emit_node:
+                yield _ndjson({"type": "token", "text": text})
+            else:
+                yield text
+
+    # 3. StreamingResponse로 반환
+    # - 기본: raw text 스트림
+    # - emit_node=True: line-by-line 파싱이 쉬운 NDJSON
+    media_type = "application/x-ndjson" if emit_node else "text/event-stream"
+    return StreamingResponse(response_generator(), media_type=media_type)
 
 @router.get("/reset")
 def reset(uid:str):

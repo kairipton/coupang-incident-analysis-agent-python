@@ -414,9 +414,13 @@ def node_evaluate(state:State):
     # 평가 시작
     # metrics는 평가 항목 리스트를 나타내며, ragas에서 미리 정의된 개체들로 사용함.
     print("\n[RAGAS 평가 진행 중...]")
+    # ragas 0.4.x의 AnswerRelevancy는 기본 strictness=3으로 LLM에 n=3 generations을 요구합니다.
+    # 일부 모델/환경에서는 n>1이 무시되어 내부에서 IndexError가 발생할 수 있어 strictness=1로 낮춥니다.
+    from ragas.metrics import AnswerRelevancy
+
     metrics = [
-        faithfulness, # 충실도: 답변이 컨텍스트에 근거하는가?
-        answer_relevancy, # 답변 관련성: 질문에 제대로 답했는가?
+        faithfulness,  # 충실도: 답변이 컨텍스트에 근거하는가?
+        AnswerRelevancy(strictness=1),  # 답변 관련성: 질문에 제대로 답했는가?
     ]
 
     # reference(정답)가 있을 때만 context_precision을 포함
@@ -437,21 +441,44 @@ def node_evaluate(state:State):
         # gpt-5/o-계열 등 temperature 제약 모델을 위해 temperature=1로 고정.
         eval_llm = ChatOpenAI(model=Config.llm_model_name, temperature=1)
 
-        result = evaluate(
-            dataset, # 평가할 데이터
-            metrics=metrics, # 평가 항목
+        # NOTE: ragas 0.4.3에는 EvaluationResult 생성 시(트레이스 파싱) root_traces가 비어
+        # IndexError가 발생하는 케이스가 있습니다. return_executor=True로 EvaluationResult
+        # 생성을 우회하고, Executor.results()로 점수를 받아 직접 매핑합니다.
+        executor = evaluate(
+            dataset,  # 평가할 데이터
+            metrics=metrics,  # 평가 항목
             llm=LangchainLLMWrapper(eval_llm, bypass_temperature=True),
             embeddings=LangchainEmbeddingsWrapper(embeddings),
             raise_exceptions=False,
+            return_executor=True,
         )
     except Exception as e:
         print(f"[RAGAS] 실패: {type(e).__name__}: {e}")
         return {}
 
+    # 결과 파싱(현재 그래프는 dataset 1행 평가가 일반적)
+    try:
+        raw_scores = executor.results()
+    except Exception as e:
+        print(f"[RAGAS] 결과 수집 실패: {type(e).__name__}: {e}")
+        return {}
 
-    # 결과 파싱
-    score_df = result.to_pandas()
-    score_dict = score_df.to_dict( "records" )[0]
+    score_dict = {}
+    if isinstance(raw_scores, list) and len(raw_scores) == len(metrics):
+        normalized_scores = []
+        for v in raw_scores:
+            # numpy scalar -> python scalar
+            if hasattr(v, "item"):
+                try:
+                    v = v.item()
+                except Exception:
+                    pass
+            normalized_scores.append(v)
+
+        score_dict = {getattr(m, "name", f"metric_{i}"): normalized_scores[i] for i, m in enumerate(metrics)}
+    else:
+        # 예외 케이스(예: 여러 행/내부 flatten 포맷)에서는 원시 결과를 그대로 노출
+        score_dict = {"raw_scores": raw_scores}
 
     print(f"\n[RAGAS 평가 결과] {score_dict}")
 

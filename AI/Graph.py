@@ -19,7 +19,17 @@ builder = StateGraph(Node.State)
 # region 노드 정의
 """ 그래프에 쓰일 노드들을 정의 함"""
 builder.add_node( "question", Node.node_input_question )
-builder.add_node( "multi_query", Node.node_multiquery_search )
+builder.add_node(
+    "multi_query",
+    Node.node_multiquery_search,
+    # 노드별 커스텀 메타데이터 예시
+    # - astream_events()로 나오는 ev['metadata']에 함께 포함될 수 있음
+    # - Unity 진행 UI에 쓸 "표시 문구/단계" 같은 값을 여기에 넣어두면 편함
+    metadata={
+        "unity_label": "문서 검색중",
+        "unity_step": 2,
+    },
+)
 builder.add_node( "tool_call", Node.node_tool_call )
 builder.add_node( "route_next", Node.node_route_next )
 builder.add_node( "tools", Node.node_tools )
@@ -43,7 +53,8 @@ builder.add_conditional_edges(
     }
 )
 builder.add_edge( "tools", "tool_call" )
-builder.add_edge( "final_answer", "summary" )
+builder.add_edge( "final_answer", "evaluate" )
+builder.add_edge( "evaluate", "summary" )
 builder.add_edge( "summary", END )
 # endregion
 

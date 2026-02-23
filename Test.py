@@ -68,7 +68,11 @@ async def run_async_test():
 
         # 2. 비동기 함수 호출 (await 필수)
         # GameAPI.userchat_async는 StreamingResponse 객체를 리턴
-        response: StreamingResponse = await UserAPI.userchat_async(uid, user_input)
+        #response: StreamingResponse = await UserAPI.userchat_async(uid, user_input)
+        response: StreamingResponse = await UserAPI.userchat_async(
+            uid=uid,
+            message=user_input
+        )
 
         # 3. 스트림 데이터 소비
         # body_iterator를 비동기 루프로 읽어옴

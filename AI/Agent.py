@@ -22,13 +22,13 @@ class Agent:
 
         """ 그래프에 쓰일 노드들을 정의 함"""
         self.builder.add_node( "question", Node.node_input_question )
-        self.builder.add_node( "multi_query", Node.node_multiquery_search )
-        self.builder.add_node( "tool_call", Node.node_tool_call )
-        self.builder.add_node( "route_next", Node.node_route_next )
-        self.builder.add_node( "tools", Node.node_tools )
-        self.builder.add_node( "final_answer", Node.node_final_answer )
-        self.builder.add_node( "summary", Node.node_summary_conversation )
-        self.builder.add_node( "evaluate", Node.node_evaluate ) # 평가용으로 필요시 연결해서 사용
+        self.builder.add_node( "multi_query", Node.node_multiquery_search, metadata={ "unity_label": "Multi-Query & Hybrid Search & Reranking 진행중" } )
+        self.builder.add_node( "tool_call", Node.node_tool_call, metadata={ "unity_label": "Tool Calling 판단중" } )
+        self.builder.add_node( "route_next", Node.node_route_next, metadata={ "unity_label": "Tool Calling 분기 처리중" } )
+        self.builder.add_node( "tools", Node.node_tools, metadata={ "unity_label": "Tool Calling 진행중" } )
+        self.builder.add_node( "final_answer", Node.node_final_answer, metadata={ "unity_label": "답변 생성중" } )
+        self.builder.add_node( "summary", Node.node_summary_conversation, metadata={ "unity_label": "답변 요약중" } )
+        self.builder.add_node( "evaluate", Node.node_evaluate, metadata={ "unity_label": "RAGAS 응답 평가중" } ) # 평가용으로 필요시 연결해서 사용
 
         """ 노드 연결 시작 """
         self.builder.add_edge( START, "question" )
