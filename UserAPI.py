@@ -225,6 +225,7 @@ async def userchat_async(uid: str, message: str):
         # metal에 넣지 말고 eval로 따로 넣자.
         yield _ndjson({"type": "qa_result", "eval": qa_result})
         await asyncio.sleep(0.05)  # 마지막 청크가 전송될 때까지 대기
+        yield _ndjson({"type":"end"})
 
     # 3. StreamingResponse로 반환
     # - 기본: raw text 스트림
