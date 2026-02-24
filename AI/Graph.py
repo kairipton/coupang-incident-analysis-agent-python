@@ -7,6 +7,7 @@ from langgraph.graph import add_messages
 from langgraph.graph import StateGraph, START, END 
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
+from pprint import pprint
 
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
@@ -26,8 +27,7 @@ builder.add_node(
     # - astream_events()로 나오는 ev['metadata']에 함께 포함될 수 있음
     # - Unity 진행 UI에 쓸 "표시 문구/단계" 같은 값을 여기에 넣어두면 편함
     metadata={
-        "unity_label": "문서 검색중",
-        "unity_step": 2,
+        "unity_label": "멀티 쿼리 진행중",
     },
 )
 builder.add_node( "tool_call", Node.node_tool_call )
@@ -65,18 +65,21 @@ print( graph.get_graph().draw_ascii() )
 
 config = { "configurable" : { "thread_id" : "test_uid" } }
 
-question = "고객 정보가 얼마나 유출 됐나요?"
-result = graph.invoke({ 
-    "messages" : [ 
-        ( "user", question ) 
-    ]
-}, config=config )
 
-# 0은 사용자의 입력, -1이 대체로 AI의 답변이지만, 도구사용을 마지막으로 했을 경우 메세지가 아닐 수 있다.
-print( result["messages"][0] )
-print( result["messages"][-1] )
+while True:
+    question = input( "질문: ")
+    result = graph.invoke({ 
+        "messages" : [ 
+            ( "user", question ) 
+        ]
+    }, config=config )
 
-summary = result.get( "summary", "" )
-print( "\n[대화 요약]" )
-print( summary )
+    # 0은 사용자의 입력, -1이 대체로 AI의 답변이지만, 도구사용을 마지막으로 했을 경우 메세지가 아닐 수 있다.
+    #print( result["messages"][0] )
+    #print( result["messages"][-1] )
+    pprint( result )
+
+    # summary = result.get( "summary", "" )
+    # print( "\n[대화 요약]" )
+    # print( summary )
 

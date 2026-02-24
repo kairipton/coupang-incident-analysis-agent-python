@@ -20,6 +20,7 @@ from langchain_classic.retrievers import EnsembleRetriever
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
+from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage
 from sentence_transformers import CrossEncoder
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision, ContextUtilization
@@ -186,11 +187,14 @@ def node_tool_call(state: State):
         당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
         주어진 질문과 정보를 바탕으로, 적합한 도구를 선택하여 사용하세요.
 
+        [이전 대화 요약]
+        {state.get("summary", "없음")}
+
         [질문]
         {state["question"]}
 
         [정보] 
-        {state["documents"]}
+        {state.get( "documents", "검색된 문서 없음" )}
     """
 
     # 대화 내역은 프롬프트에 포함시키지 않고 따로 붙힌다.
@@ -235,12 +239,17 @@ def node_final_answer(state: State):
         당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
         주어진 질문과 정보를 바탕으로, 최종 답변 메시지를 생성하세요.
 
+        [이전 대화 요약]
+        {state.get("summary", "없음")}
+
         [질문]
         {state["question"]}
 
         [정보] 
-        {state["documents"]}
+        {state.get( "documents", "검색된 문서 없음" )}
     """
+
+    print( prompt )
 
     msg = [SystemMessage(content=prompt)] + state["messages"]
 
@@ -270,18 +279,21 @@ def node_summary_conversation(state: State):
     """
     대화 내역 요약.
     최종 답을 내리기 전 현재까지의 대화 내역을 요약한다.
+    이 노드에 도달하면 messages에 있는 대화 내역을 토대로 summary를 업데이트 한다.
 
     Returns:
         "summary": 요약된 대화 내용
     """
 
     summary = state.get( "summary", "" )
-    messages = __format_messages_for_summary( state.get( "messages", [] ) )
+    all_messages: list[BaseMessage] = state.get( "messages", [] )
+    messages = __format_messages_for_summary( all_messages )
 
     prompt = f"""
         아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
         [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
         출력시 대화 요약된 대화 내역만 출력 하세요.
+        현재 대화 세션에서 사용한 도구가 있다면 도구를 사용한 이유와, 그 결과도 요약 내용에 포함 하세요.
         
         [요약본]
         {summary}
@@ -290,10 +302,22 @@ def node_summary_conversation(state: State):
         {messages}
     """
 
+    # 대화 요약 생성.
     answer = llm.invoke( prompt )
-    return { "summary": getattr( answer, "content", str(answer) ) }
 
+    #print( messages )
 
+    from langchain_core.messages import RemoveMessage
+
+    remove_messages = []
+    for m in all_messages:
+        if m.id:
+            remove_messages.append( RemoveMessage( m.id ) )
+
+    return { 
+        "messages": remove_messages,
+        "summary": getattr( answer, "content", str(answer) ) 
+    }
 
 
 
