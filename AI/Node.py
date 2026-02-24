@@ -629,9 +629,11 @@ def node_graph_end(state:State):
     """
 
     print( "\n[그래프 종료]\n" )
-
-
-    return {}
+    
+    return {
+        "multi_queries": state.get("multi_queries", []),
+        "ragas": state.get("ragas", {})
+    }
 
 # endregion
 

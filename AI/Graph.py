@@ -20,23 +20,15 @@ builder = StateGraph(Node.State)
 # region 노드 정의
 """ 그래프에 쓰일 노드들을 정의 함"""
 builder.add_node( "question", Node.node_input_question )
-builder.add_node(
-    "multi_query",
-    Node.node_multiquery_search,
-    # 노드별 커스텀 메타데이터 예시
-    # - astream_events()로 나오는 ev['metadata']에 함께 포함될 수 있음
-    # - Unity 진행 UI에 쓸 "표시 문구/단계" 같은 값을 여기에 넣어두면 편함
-    metadata={
-        "unity_label": "멀티 쿼리 진행중",
-    },
-)
-builder.add_node( "tool_call", Node.node_tool_call )
-builder.add_node( "route_next", Node.node_route_next )
-builder.add_node( "tools", Node.node_tools )
-builder.add_node( "final_answer", Node.node_final_answer )
-builder.add_node( "summary", Node.node_summary_conversation )
-builder.add_node( "evaluate", Node.node_evaluate )
-builder.add_node( "graph_end", Node.node_graph_end )
+builder.add_node( "multi_query", Node.node_multiquery_search, metadata={ "unity_label": "Mutli Querying..." } )
+builder.add_node( "hybrid_search", Node.node_hybrid_search, metadata={ "unity_label": "Hybrid Searching..." } )
+builder.add_node( "tool_call", Node.node_tool_call, metadata={ "unity_label": "Decision Tool Calling..." } )
+builder.add_node( "route_next", Node.node_route_next, metadata={ "unity_label": "Decision Tool Calling..." } )
+builder.add_node( "tools", Node.node_tools, metadata={ "unity_label": "Using Tools..." } )
+builder.add_node( "final_answer", Node.node_final_answer, metadata={ "unity_label": "Generating Answer..." } )
+builder.add_node( "summary", Node.node_summary_conversation, metadata={ "unity_label": "Summarying messages..." } )
+builder.add_node( "evaluate", Node.node_evaluate, metadata={ "unity_label": "RAGAS Processing..." } )
+builder.add_node( "graph_end", Node.node_graph_end, metadata={ "unity_label": "DONE!" } )
 # endregion
 
 
@@ -44,7 +36,8 @@ builder.add_node( "graph_end", Node.node_graph_end )
 """ 노드 연결 시작 """
 builder.add_edge( START, "question" )
 builder.add_edge( "question", "multi_query" )
-builder.add_edge( "multi_query", "tool_call" )
+builder.add_edge( "multi_query", "hybrid_search" )
+builder.add_edge( "hybrid_search", "tool_call" )
 builder.add_conditional_edges( 
     "tool_call", 
     Node.node_route_next,
@@ -54,9 +47,9 @@ builder.add_conditional_edges(
     }
 )
 builder.add_edge( "tools", "tool_call" )
-builder.add_edge( "final_answer", "evaluate" )
-builder.add_edge( "evaluate", "summary" )
-builder.add_edge( "summary", "graph_end" )
+builder.add_edge( "final_answer", "summary" )
+builder.add_edge( "summary", "evaluate" )
+builder.add_edge( "evaluate", "graph_end" )
 builder.add_edge( "graph_end", END )
 # endregion
 
