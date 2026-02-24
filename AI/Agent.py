@@ -29,6 +29,7 @@ class Agent:
         self.builder.add_node( "final_answer", Node.node_final_answer, metadata={ "unity_label": "답변 생성중" } )
         self.builder.add_node( "summary", Node.node_summary_conversation, metadata={ "unity_label": "답변 요약중" } )
         self.builder.add_node( "evaluate", Node.node_evaluate, metadata={ "unity_label": "RAGAS 응답 평가중" } ) # 평가용으로 필요시 연결해서 사용
+        self.builder.add_node( "graph_end", Node.node_graph_end, metadata={ "unity_label": "그래프 종료" } )
 
         """ 노드 연결 시작 """
         self.builder.add_edge( START, "question" )
@@ -45,7 +46,8 @@ class Agent:
         self.builder.add_edge( "tools", "tool_call" )
         self.builder.add_edge( "final_answer", "summary" )
         self.builder.add_edge( "summary", "evaluate" )
-        self.builder.add_edge( "evaluate", END )
+        self.builder.add_edge( "evaluate", "graph_end" )
+        self.builder.add_edge( "graph_end", END )
 
         self.graph = self.builder.compile( checkpointer=self.memory )
         print( self.graph.get_graph().draw_ascii() )

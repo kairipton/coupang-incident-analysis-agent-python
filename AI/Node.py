@@ -21,10 +21,12 @@ from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import RemoveMessage
 from sentence_transformers import CrossEncoder
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision, ContextUtilization
 from datasets import Dataset
+from pprint import pprint
 
 import Utils.Utils as Utils
 import GameConfig as Config
@@ -42,10 +44,12 @@ llm_with_tool = llm.bind_tools( all_tools )
 class State(TypedDict):
     question: Annotated[str, "question"] # 원본 질문. 그래프 루프가 시작할때 입력됨.
     documents: Annotated[list, "documents"] # 멀티쿼리 리트리버로 가져온 문서들.
+    multi_queries: NotRequired[Annotated[list, "multi_queries"]] # 멀티쿼리로 생성된 쿼리들.
     messages: Annotated[list, add_messages] # 대화 히스토리
     summary: Annotated[str, "summary"] # 대화 요약본. 응답 후 마지막에 갱신 됨.
     reference: NotRequired[Annotated[str, "reference answer"]] # 평가용 정답. 라이브에서는 안쓰임.
     last_tool: NotRequired[Annotated[str, "last tool name"]] # 마지막으로 실행된 도구 이름(라우팅용)
+    ragas: NotRequired[Annotated[dict, "ragas_scores"]] # RAGAS 평가 결과(메트릭 점수)
 
 # region 유틸리티
 def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
@@ -158,6 +162,8 @@ def __get_cross_encoder_reranker():
 """ 툴 노드. LLM이 알아서 실행하게 된다. """
 node_tools = ToolNode( all_tools )
 
+
+
 def node_input_question(state: State):
     """
     사용자의 질문을 입력받는 노드.
@@ -170,6 +176,8 @@ def node_input_question(state: State):
     print( f"질문: {state['messages'][-1].content}" ) 
 
     return { "question": state["messages"][-1].content }
+
+
 
 def node_tool_call(state: State):
     """
@@ -215,6 +223,8 @@ def node_tool_call(state: State):
 
     return {}
 
+
+
 def node_route_next(state:State):
     """
     가장 마지막 메세지에 tool_calls가 있으면 need_tools를, 없으면 "NONE"을 리턴.
@@ -228,6 +238,8 @@ def node_route_next(state:State):
     tool_calls = getattr( last, "tool_calls", None )
 
     return "need_tools" if tool_calls else "NONE"
+
+
 
 def node_final_answer(state: State):
     """
@@ -249,7 +261,7 @@ def node_final_answer(state: State):
         {state.get( "documents", "검색된 문서 없음" )}
     """
 
-    print( prompt )
+    #print( prompt )
 
     msg = [SystemMessage(content=prompt)] + state["messages"]
 
@@ -275,85 +287,55 @@ def node_final_answer(state: State):
 
 
 
-def node_summary_conversation(state: State):
+
+def node_multiquery(state:State):
     """
-    대화 내역 요약.
-    최종 답을 내리기 전 현재까지의 대화 내역을 요약한다.
-    이 노드에 도달하면 messages에 있는 대화 내역을 토대로 summary를 업데이트 한다.
+    사용자의 질문을 멀티쿼리리로 변환.
 
     Returns:
-        "summary": 요약된 대화 내용
+        "multi_queries": 멀티쿼리로 생성된 질문 리스트
     """
 
-    summary = state.get( "summary", "" )
-    all_messages: list[BaseMessage] = state.get( "messages", [] )
-    messages = __format_messages_for_summary( all_messages )
 
     prompt = f"""
-        아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
-        [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
-        출력시 대화 요약된 대화 내역만 출력 하세요.
-        현재 대화 세션에서 사용한 도구가 있다면 도구를 사용한 이유와, 그 결과도 요약 내용에 포함 하세요.
-        
-        [요약본]
-        {summary}
-
-        [대화 내역]
-        {messages}
-    """
-
-    # 대화 요약 생성.
-    answer = llm.invoke( prompt )
-
-    #print( messages )
-
-    from langchain_core.messages import RemoveMessage
-
-    remove_messages = []
-    for m in all_messages:
-        if m.id:
-            remove_messages.append( RemoveMessage( m.id ) )
-
-    return { 
-        "messages": remove_messages,
-        "summary": getattr( answer, "content", str(answer) ) 
-    }
-
-
-
-def node_multiquery_search(state:State):
-    """
-    사용자의 질문을 여러개의 질문으로 변환(Multi-Query)하여, 
-    앙상블 리트리버(Hybrid Search)를 이용해 RAG 검색 결과를 가져옴
-
-    Returns:
-        "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
-    """
-    
-    # 하이브리드 서치로 잘 가져올 수 있도록,
-    # 질문을 잘 나눌수 있게 멀티쿼리를 위한 프롬프트를 작성 해야 함.
-    template = PromptTemplate.from_template( """
         사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
         각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
         각 쿼리는 한줄씩, 쿼리만 출력하세요.
                                  
-        질문: {question}
-    """)
+        질문: {state["question"]}
+    """
 
-    # MultiQueryReriever는 멀티 쿼리와 리트리버를 이용한 검색을 한큐에 해버린다.
-    # 이때 리트리트가 앙상블 리트리버라면 하이브리드 개념상 하이브리드 서치이므로,
-    # Multi Query + Hybrid Search가 한큐에 되는 셈.
-    # 다만, 멀티 쿼리로 질문이 5개가 된 경우, k가 6개라면, 질문당 문서를 6개를 가져오게 되는데,
-    # 5 * 6 = 최대 30개의 문서가 검색될 수 있고, 이 문서를 전부 프롬프트로 날리면 토큰 사용량이 너무 커진다.
-    # 그러므로 검색 후 적절히 걸러주는게 좋다. (Rerank 등..)
-    mqr = MultiQueryRetriever.from_llm(
-        retriever=__get_hybrid_retriever( k=6 ),
-        llm=llm,
-        prompt=template,
-        include_original=True
-    )
+
+    mq_llm = ChatOpenAI( model=Config.query_llm_model_name, temperature=0.5 )
+    answer = mq_llm.invoke( prompt )
+    answer = getattr(answer, "content", "") or str(answer)
+    answers = answer.splitlines()
     
-    docs = mqr.invoke( state["question"] )
+    return {
+        "multi_queries": answers
+    }
+
+def node_hybrid_search(state:State):
+    """
+    앙상블 리트리버를 이용해 하이브리드 서치 결과를 가져온 다음
+    결과를 토대로 리랭킹 까지 진행된 결과를 리턴함
+
+    Returns:
+        "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
+    """
+
+    queries = state.get("multi_queries", [])
+    retriever = __get_hybrid_retriever( k=6 )
+
+    prompt = f"""
+        당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
+        주어진 [질문들]을 토대로 지식 베이스에서 정보를 검색하세요.
+
+        [질문들]
+        {queries}
+    """
+
+    docs = retriever.invoke( prompt )
 
     doc_contents = []
     for d in docs:
@@ -386,6 +368,125 @@ def node_multiquery_search(state:State):
     top_text = [text for (_, text) in top_scored]
 
     return { "documents" : top_text }
+
+
+def node_multiquery_search(state:State):
+    """
+    사용자의 질문을 여러개의 질문으로 변환(Multi-Query)하여, 
+    앙상블 리트리버(Hybrid Search)를 이용해 RAG 검색 결과를 가져옴
+    이 노드는 MultiQueryRetriever를 사용하여 멀티쿼리와 하이브리드 서치를 한방에 함.
+
+    Returns:
+        "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
+    """
+    
+    # 하이브리드 서치로 잘 가져올 수 있도록,
+    # 질문을 잘 나눌수 있게 멀티쿼리를 위한 프롬프트를 작성 해야 함.
+    template = PromptTemplate.from_template( """
+        사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
+        각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
+        각 쿼리는 한줄씩, 쿼리만 출력하세요.
+                                 
+        질문: {question}
+    """ )
+
+    # MultiQueryReriever는 멀티 쿼리와 리트리버를 이용한 검색을 한큐에 해버린다.
+    # 이때 리트리트가 앙상블 리트리버라면 하이브리드 개념상 하이브리드 서치이므로,
+    # Multi Query + Hybrid Search가 한큐에 되는 셈.
+    # 다만, 멀티 쿼리로 질문이 5개가 된 경우, k가 6개라면, 질문당 문서를 6개를 가져오게 되는데,
+    # 5 * 6 = 최대 30개의 문서가 검색될 수 있고, 이 문서를 전부 프롬프트로 날리면 토큰 사용량이 너무 커진다.
+    # 그러므로 검색 후 적절히 걸러주는게 좋다. (Rerank 등..)
+    # Unity로 전달할 메타데이터용: 멀티쿼리 생성 결과를 state에 남김
+    try:
+        mq_llm = ChatOpenAI(model=Config.query_llm_model_name, temperature=0.5)
+        mq_answer = mq_llm.invoke(template.format(question=state["question"]))
+        mq_text = getattr(mq_answer, "content", "") or str(mq_answer)
+        multi_queries = [q.strip() for q in mq_text.splitlines() if q.strip()]
+    except Exception:
+        multi_queries = []
+
+    mqr = MultiQueryRetriever.from_llm(
+        retriever=__get_hybrid_retriever( k=6 ),
+        llm=llm,
+        prompt=template,
+        include_original=True
+    )
+    
+    docs = mqr.invoke( state["question"] )
+    
+    doc_contents = []
+    for d in docs:
+        if hasattr( d, "page_content" ):
+            doc_contents.append( d.page_content )
+
+    reranker = __get_cross_encoder_reranker()
+
+    # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
+    # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
+    pairs = [(state["question"], doc) for doc in doc_contents]
+    scores = reranker.predict( pairs )
+
+    # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
+    # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
+    scores_as_float = [float(s) for s in scores]
+
+    # zip은 두개 리스트가 가진 원소를 하나씩 묶어 튜플로 만들어줌.
+    # 다만, zip으로 묶을 준비만 하고, 실제 리스트로 만들려면 list로 변환 해야 함.
+    # 결과적으로 튜플(score, doc) 리스트가 생김.
+    score_doc = list( zip(scores_as_float, doc_contents) )
+    
+    # 리스트가 가진 튜플의 첫번째 값을 키로 사용 하여 정렬.
+    # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
+    score_doc.sort( key=lambda x: x[0], reverse=True )
+
+    # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
+    top_scored = score_doc[: max(1, 5)]
+
+    top_text = [text for (_, text) in top_scored]
+
+    return {
+        "documents": top_text,
+        "multi_queries": multi_queries,
+    }
+
+
+
+def node_summary_conversation(state: State):
+    """
+    대화 내역 요약.
+    최종 답을 내리기 전 현재까지의 대화 내역을 요약한다.
+    이 노드에 도달하면 messages에 있는 대화 내역을 토대로 summary를 업데이트 한다.
+
+    Returns:
+        "summary": 요약된 대화 내용
+    """
+
+    summary = state.get( "summary", "이전 대화 요약본 없음 (첫 대화일 경우 없을 수 있음)" )
+    all_messages: list[BaseMessage] = state.get( "messages", [] )
+    messages = __format_messages_for_summary( all_messages )
+
+    prompt = f"""
+        아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
+        [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
+        출력시 대화 요약된 대화 내역만 출력 하세요.
+        현재 대화 세션에서 사용한 도구가 있다면 도구를 사용한 이유와, 그 결과도 요약 내용에 포함 하세요.
+        
+        [요약본]
+        {summary}
+
+        [대화 내역]
+        {messages}
+    """
+
+    # 대화 요약 생성.
+    answer = llm.invoke( prompt )
+
+    print( f"대화 요약: {getattr(answer, 'content', str(answer))}" )
+
+    return { 
+        "summary": getattr( answer, "content", str(answer) ) 
+    }
+
 
 
 
@@ -504,9 +605,47 @@ def node_evaluate(state:State):
         # 예외 케이스(예: 여러 행/내부 flatten 포맷)에서는 원시 결과를 그대로 노출
         score_dict = {"raw_scores": raw_scores}
 
+
+    # 모든 메세지 삭제.
+    # 다음 대화에서는 요약본을 토대로 대화하게 되어서 메세지는 필요 없음.
+    messages: list[BaseMessage] = state.get( "messages", [] )
+    remove_messages = []
+    for m in messages:
+        if m.id:
+            remove_messages.append( RemoveMessage( m.id ) )
+
+
     print(f"\n[RAGAS 평가 결과] {score_dict}")
+
+    return {
+        "messages": remove_messages,
+        "ragas": score_dict,
+    }
+
+def node_graph_end(state:State):
+    """
+    그래프 종료 노드.
+    정리가 필요한 기능 등등을 여기에 작성 할 것.
+    """
+
+    print( "\n[그래프 종료]\n" )
+
 
     return {}
 
-
 # endregion
+
+
+
+
+
+
+"""이하 노드 테스트 코드들"""
+# node_multiquery_search(State( {
+#     "question": "얼마나 유출?",
+# } ) )
+
+# print( node_hybrid_search( State( {
+#     "question" : "얼마나 유출?",
+#     "multi_queries" : [ "얼마나 유출?", "몇명의 사용자의 정보가 유출 되었나요?"]
+# } ) ) )

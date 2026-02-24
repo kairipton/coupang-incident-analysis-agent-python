@@ -81,14 +81,22 @@ def userchat(uid:str, message: str):
 
     res = agent.run_qa( message )
     ai_msg=  __get_ai_message( res )
-    
+
+    multi_queries = res.get("multi_queries") or []
+    meta = {
+        "multi_queries": multi_queries,
+        "multi_query_count": len(multi_queries),
+        "ragas": res.get("ragas"),
+    }
+
     return {
-        "message": ai_msg, 
+        "message": ai_msg,
+        "meta": meta,
     }
 
 @traceable
 @router.get("/userchat_async")
-async def userchat_async(uid: str, message: str, emit_node: bool = True):
+async def userchat_async(uid: str, message: str):
     """
     채팅 티키타카 (스트리밍 버전)
     - 즉시 응답(StreamingResponse)을 반환
@@ -115,6 +123,10 @@ async def userchat_async(uid: str, message: str, emit_node: bool = True):
     async def response_generator():
         full_answer = ""
         current_node = None
+        qa_result = {
+            "query_count" : 0,
+            "ragas" : "평가 점수가 없습니다."
+        }
 
         def _ndjson(obj: dict) -> str:
             return json.dumps(obj, ensure_ascii=False) + "\n"
@@ -146,41 +158,51 @@ async def userchat_async(uid: str, message: str, emit_node: bool = True):
             # 그래서 아래처럼 '노드 자체 시작 이벤트'만 골라냅니다.
             node_name = metadata.get("langgraph_node") or metadata.get("node")            
 
-            if emit_node:
-                # 1) 노드 전환 이벤트를 뽑는 기준
-                # - on_chain_start: 어떤 체인(=노드/내부 runnable)이 시작될 때
-                # - node_name이 있어야 "그래프의 어떤 노드인지" 알 수 있음
-                # - ev_name == node_name 인 경우만 "그래프 노드 자체"의 시작으로 간주
-                #   (예: node=multi_query, name=RunnableSequence 는 노드 내부라서 제외)
-                is_chain_start = ev_type == "on_chain_start"
-                has_node_name = bool(node_name)
-                is_graph_node_start = has_node_name and (ev_name == node_name)
+            # 이벤트 payload는 ev['data'] 아래에 들어오는 경우가 많음
+            # - stream 이벤트에서는 보통 data['chunk']에 "토큰 조각"(str 또는 MessageChunk 유사 객체)이 담김
+            data = ev.get("data") or {}
+            chunk = data.get("chunk")
 
-                if is_chain_start and is_graph_node_start:
-                    # 2) 같은 노드 이벤트는 중복 전송하지 않음
-                    if node_name != current_node:
-                        current_node = node_name
-                        # 노드에 커스텀 메타데이터를 붙여둔 경우(예: add_node(..., metadata={...}))
-                        # Unity로 함께 전달할 값을 여기서 꺼내서 포함시킬 수 있음
-                        payload = {"type": "node", "node": node_name, "status": "start"}
+            # 1) 노드 전환 이벤트를 뽑는 기준
+            # - on_chain_start: 어떤 체인(=노드/내부 runnable)이 시작될 때
+            # - node_name이 있어야 "그래프의 어떤 노드인지" 알 수 있음
+            # - ev_name == node_name 인 경우만 "그래프 노드 자체"의 시작으로 간주
+            #   (예: node=multi_query, name=RunnableSequence 는 노드 내부라서 제외)
+            is_chain_start = ev_type == "on_chain_start"
+            is_chain_end = ev_type == "on_chain_end"
+            has_node_name = bool(node_name)
+            is_graph_node_start = has_node_name and (ev_name == node_name)
 
-                        unity_label = metadata.get("unity_label")
-                        if unity_label is not None:
-                            payload["meta"] = unity_label
-                            print( unity_label )
+            if is_chain_end and node_name == "graph_end":
+                # 마지막 노드에 도달하면 실행 정보를 보여줄 정보를 수집함
+                if node_name == "graph_end":
+                    output = data.get( "output" )
+                    if isinstance( output, dict ):
+                        mq = output.get( "multi_queries", [] )
+                        qa_result[ "query_count" ] = len(mq)
+                        qa_result[ "ragas" ] = output.get( "ragas", "평가 점수가 없습니다" )
 
-                        yield _ndjson(payload)
+            elif is_chain_start and is_graph_node_start:
+
+                # 2) 같은 노드 이벤트는 중복 전송하지 않음
+                if node_name != current_node:
+                    current_node = node_name
+                    # 노드에 커스텀 메타데이터를 붙여둔 경우(예: add_node(..., metadata={...}))
+                    # Unity로 함께 전달할 값을 여기서 꺼내서 포함시킬 수 있음
+                    payload = {"type": "node", "node": node_name, "status": "start"}
+
+                    unity_label = metadata.get("unity_label")
+                    if unity_label is not None:
+                        payload["meta"] = unity_label
+                        print( unity_label )
+
+                    yield _ndjson(payload)
 
             # final_answer 노드에서 생성되는 토큰만 유니티로 스트리밍
             if node_name and node_name != "final_answer":
                 continue
             if ev_type not in ("on_chat_model_stream", "on_llm_stream"):
                 continue
-
-            # 이벤트 payload는 ev['data'] 아래에 들어오는 경우가 많음
-            # - stream 이벤트에서는 보통 data['chunk']에 "토큰 조각"(str 또는 MessageChunk 유사 객체)이 담김
-            data = ev.get("data") or {}
-            chunk = data.get("chunk")
 
             # chunk가 없으면(다른 타입의 이벤트이거나 비어있으면) 토큰으로 보낼 게 없으니 스킵
             if chunk is None:
@@ -196,15 +218,16 @@ async def userchat_async(uid: str, message: str, emit_node: bool = True):
             full_answer += text
             await asyncio.sleep(0.01)
 
-            if emit_node:
-                yield _ndjson({"type": "token", "text": text})
-            else:
-                yield text
+            yield _ndjson({"type": "token", "text": text})
+
+        # 스트림이 끝난 후 최종 답변과 실행 결과 정보를 넘김 (멀티 쿼리 수, RAGAS 점수...)
+        yield _ndjson({"type": "qa_result", "meta": qa_result})
 
     # 3. StreamingResponse로 반환
     # - 기본: raw text 스트림
-    # - emit_node=True: line-by-line 파싱이 쉬운 NDJSON
-    media_type = "application/x-ndjson" if emit_node else "text/event-stream"
+    
+    #media_type = "text/event-stream" # 단순 텍스트 청크 스트림
+    media_type = "application/x-ndjson"
     return StreamingResponse(response_generator(), media_type=media_type)
 
 @router.get("/reset")
@@ -220,7 +243,9 @@ def reset(uid:str):
     """
 
     logout( uid )
-    return login( uid )
+    #return login( uid )
+    
+    return "안녕하세요. 저는 쿠팡 유출 사태와 관련된 질문을 처리할 수 있습니다. 무엇이 궁금하신가요?"
 
 
 

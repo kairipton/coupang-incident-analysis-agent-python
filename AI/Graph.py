@@ -36,6 +36,7 @@ builder.add_node( "tools", Node.node_tools )
 builder.add_node( "final_answer", Node.node_final_answer )
 builder.add_node( "summary", Node.node_summary_conversation )
 builder.add_node( "evaluate", Node.node_evaluate )
+builder.add_node( "graph_end", Node.node_graph_end )
 # endregion
 
 
@@ -55,7 +56,8 @@ builder.add_conditional_edges(
 builder.add_edge( "tools", "tool_call" )
 builder.add_edge( "final_answer", "evaluate" )
 builder.add_edge( "evaluate", "summary" )
-builder.add_edge( "summary", END )
+builder.add_edge( "summary", "graph_end" )
+builder.add_edge( "graph_end", END )
 # endregion
 
 memory = MemorySaver()
