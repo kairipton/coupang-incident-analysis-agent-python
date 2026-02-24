@@ -182,6 +182,7 @@ async def userchat_async(uid: str, message: str):
                         mq = output.get( "multi_queries", [] )
                         qa_result[ "query_count" ] = len(mq)
                         qa_result[ "ragas" ] = output.get( "ragas", "평가 점수가 없습니다" )
+                        yield _ndjson({"type": "qa_result", "eval": qa_result})
 
             elif is_chain_start and is_graph_node_start:
 
@@ -223,8 +224,8 @@ async def userchat_async(uid: str, message: str):
 
         # 스트림이 끝난 후 최종 답변과 실행 결과 정보를 넘김 (멀티 쿼리 수, RAGAS 점수...)
         # metal에 넣지 말고 eval로 따로 넣자.
-        yield _ndjson({"type": "qa_result", "eval": qa_result})
-        await asyncio.sleep(0.05)  # 마지막 청크가 전송될 때까지 대기
+        # yield _ndjson({"type": "qa_result", "eval": qa_result})
+        # await asyncio.sleep(0.05)  # 마지막 청크가 전송될 때까지 대기
 
     # 3. StreamingResponse로 반환
     # - 기본: raw text 스트림
