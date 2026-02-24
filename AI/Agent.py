@@ -44,7 +44,8 @@ class Agent:
         )
         self.builder.add_edge( "tools", "tool_call" )
         self.builder.add_edge( "final_answer", "summary" )
-        self.builder.add_edge( "summary", END )
+        self.builder.add_edge( "summary", "evaluate" )
+        self.builder.add_edge( "evaluate", END )
 
         self.graph = self.builder.compile( checkpointer=self.memory )
         print( self.graph.get_graph().draw_ascii() )
