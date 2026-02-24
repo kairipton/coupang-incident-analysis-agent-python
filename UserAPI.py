@@ -43,7 +43,8 @@ def login(uid:str):
     #welcome_msg = GameManager.get_welcome_msg(user)
     #user.history.add_ai_message( welcome_msg )
 
-    return {"message": f"{uid}님이 로그인 했습니다." }
+    #return {"message": f"{uid}님이 로그인 했습니다." }
+    return {"message": "안녕하세요. 저는 쿠팡 유출 사태와 관련된 질문을 처리할 수 있습니다. 무엇이 궁금하신가요?"}
 
 @router.get("/logout")
 def logout(uid:str):
@@ -223,6 +224,7 @@ async def userchat_async(uid: str, message: str):
         # 스트림이 끝난 후 최종 답변과 실행 결과 정보를 넘김 (멀티 쿼리 수, RAGAS 점수...)
         # metal에 넣지 말고 eval로 따로 넣자.
         yield _ndjson({"type": "qa_result", "eval": qa_result})
+        await asyncio.sleep(0.05)  # 마지막 청크가 전송될 때까지 대기
 
     # 3. StreamingResponse로 반환
     # - 기본: raw text 스트림
