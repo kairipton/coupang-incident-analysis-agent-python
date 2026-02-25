@@ -45,9 +45,8 @@ def run_sync_test():
 # - main.userchat_async()를 사용
 # - async/await 사용
 # ----------------------------------------------------------------
-async def run_async_test():
+async def run_async_test(uid: str = "test_user_async"):
     print("\n[TEST MODE] 2. 비동기(Async) 스트리밍 테스트 시작")
-    uid = "test_user_async"
 
     # 1. 로그인 (로그인은 동기 함수지만 여기서 불러도 됨)
     welcome_pack = UserAPI.login(uid)
@@ -86,4 +85,4 @@ async def run_async_test():
 
 if __name__ == "__main__":
     #run_sync_test()
-    asyncio.run(run_async_test())
+    asyncio.run(run_async_test(uid="test_user_1"))

@@ -205,6 +205,8 @@ def node_tool_call(state: State):
         {state.get( "documents", "검색된 문서 없음" )}
     """
 
+    #pprint( prompt, indent=2, width=100 )
+
     # 대화 내역은 프롬프트에 포함시키지 않고 따로 붙힌다.
     # state["messages"]에는 AIMessage,HumanMessage, ToolMessage와 같은 객체들을 리스트로 들고 있는데,
     # fstring으로 붙히게 되면 tostring 으로 처리 한 다음 치환 되기 때문에

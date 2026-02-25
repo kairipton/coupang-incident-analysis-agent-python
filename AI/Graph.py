@@ -48,7 +48,8 @@ builder.add_conditional_edges(
 )
 builder.add_edge( "tools", "tool_call" )
 builder.add_edge( "final_answer", "summary" )
-builder.add_edge( "summary", "evaluate" )
+builder.add_edge( "final_answer", "evaluate" )
+builder.add_edge( "summary", "graph_end" )
 builder.add_edge( "evaluate", "graph_end" )
 builder.add_edge( "graph_end", END )
 # endregion

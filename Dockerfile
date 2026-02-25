@@ -30,7 +30,7 @@ COPY ./coupang-incident-analysis-agent /app/coupang-incident-analysis-agent
 
 # 7) (문서용) 이 컨테이너가 사용할 포트를 표시합니다.
 # - 실제 포트를 여는 건 docker-compose.yml의 ports 설정입니다.
-EXPOSE 8100
+EXPOSE 8101
 
 # 8) 컨테이너가 "실행"될 때 기본으로 수행할 명령입니다.
 # - 여기서는 main.py의 app(FastAPI 인스턴스)을 Uvicorn 서버로 실행합니다.

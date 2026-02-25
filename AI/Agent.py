@@ -8,6 +8,19 @@ import AI.Node as Node
 
 class Agent:
 
+    # uid별 MemorySaver 캐시 (Graph.py처럼 메모리를 유지)
+    _memory_store: dict = {}
+
+    @staticmethod
+    def clear_memory(uid: str):
+        """
+        uid의 메모리를 삭제 (로그아웃 시 호출)
+
+
+        """
+
+        Agent._memory_store.pop(uid, None)
+
     def __init__(self,uid:str):
 
         """
@@ -18,7 +31,12 @@ class Agent:
         self.uid = uid
         self.builder = StateGraph(Node.State)
         self.config = { "configurable" : { "thread_id" : uid } }
-        self.memory = MemorySaver()
+        
+        # 저장된 메모리가 없으면 새로 만듦.
+        if uid not in Agent._memory_store:
+            Agent._memory_store[uid] = MemorySaver()
+
+        self.memory = Agent._memory_store[uid]
 
         """ 그래프에 쓰일 노드들을 정의 함"""
         self.builder.add_node( "question", Node.node_input_question )
@@ -49,7 +67,8 @@ class Agent:
         )
         self.builder.add_edge( "tools", "tool_call" )
         self.builder.add_edge( "final_answer", "summary" )
-        self.builder.add_edge( "summary", "evaluate" )
+        self.builder.add_edge( "final_answer", "evaluate" )
+        self.builder.add_edge( "summary", "graph_end" )
         self.builder.add_edge( "evaluate", "graph_end" )
         self.builder.add_edge( "graph_end", END )
 

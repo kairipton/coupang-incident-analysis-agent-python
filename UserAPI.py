@@ -55,6 +55,7 @@ def logout(uid:str):
         uid (str): 사용자 ID
     """
     User.DB.delete_user( uid )
+    Agent.clear_memory( uid )  # 대화 메모리 삭제
 
     print( f"{uid}님이 로그아웃했습니다." )
 
@@ -123,7 +124,7 @@ async def userchat_async(uid: str, message: str):
     # 2. 비동기 제너레이터 함수 정의 (여기서 로직과 출력을 동시에 처리)
     async def response_generator():
         full_answer = ""
-        current_node = None
+        started_nodes = set()  # 병렬 노드를 중복 없이 추적 (set은 C#의 HashSet과 동일함)
         qa_result = {
             "query_count" : 0,
             "ragas" : "평가 점수가 없습니다."
@@ -185,9 +186,9 @@ async def userchat_async(uid: str, message: str):
 
             elif is_chain_start and is_graph_node_start:
 
-                # 2) 같은 노드 이벤트는 중복 전송하지 않음
-                if node_name != current_node:
-                    current_node = node_name
+                # 2) 같은 노드 이벤트는 중복 전송하지 않음 (병렬 실행 시에도 안전)
+                if node_name not in started_nodes:
+                    started_nodes.add(node_name)
                     # 노드에 커스텀 메타데이터를 붙여둔 경우(예: add_node(..., metadata={...}))
                     # Unity로 함께 전달할 값을 여기서 꺼내서 포함시킬 수 있음
                     payload = {"type": "node", "node": node_name, "status": "start"}
@@ -225,7 +226,6 @@ async def userchat_async(uid: str, message: str):
         # metal에 넣지 말고 eval로 따로 넣자.
         yield _ndjson({"type": "qa_result", "eval": qa_result})
         await asyncio.sleep(0.05)  # 마지막 청크가 전송될 때까지 대기
-        yield _ndjson({"type":"end"})
 
     # 3. StreamingResponse로 반환
     # - 기본: raw text 스트림
