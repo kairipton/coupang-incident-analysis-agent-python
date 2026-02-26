@@ -694,7 +694,8 @@ def node_graph_end(state:State):
     
     return {
         "multi_queries": state.get("multi_queries", []),
-        "ragas": state.get("ragas", {})
+        "ragas": state.get("ragas", {}),
+        "doc_names": state.get("doc_names", [])
     }
 
 # endregion
