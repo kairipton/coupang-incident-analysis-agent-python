@@ -44,3 +44,9 @@ pypdf
 
 # 뉴스 검색
 tavily-python
+
+# 베이지안 최적화 (하이퍼파라미터 튜닝)
+optuna
+
+# Optuna 결과 시각화 대시보드 (optuna-dashboard sqlite:///optuna_results.db)
+optuna-dashboard

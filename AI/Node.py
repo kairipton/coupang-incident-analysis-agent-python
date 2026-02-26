@@ -51,10 +51,31 @@ class State(TypedDict):
     last_tool: NotRequired[Annotated[str, "last tool name"]] # 마지막으로 실행된 도구 이름(라우팅용)
     ragas: NotRequired[Annotated[dict, "ragas_scores"]] # RAGAS 평가 결과(메트릭 점수)
 
+    opt_k: NotRequired[Annotated[int, "number of retrieved documents"]] # 리트리버가 가져온 문서 수 (디버깅/평가용)
+    opt_top_k: NotRequired[Annotated[int, "number of documents after reranking"]] # 리랭킹 후 최종 문서 수 (디버깅/평가용)
+    opt_w: NotRequired[Annotated[float, "weight for hybrid retriever"]] # 하이브리드 리트리버에서 가중치 (디버깅/평가용)
+
 # region 유틸리티
-def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
+def __get_hybrid_retriever(k=6, w=0.5) -> EnsembleRetriever:
     """
     BM25 + Vector 결과를 rank fusion(Weighted RRF)으로 결합한 하이브리드 리트리버를 반환하는 유틸 함수.
+
+    [BM25 리트리버]
+    - 키워드 기반 전통적인 검색 방식 (TF-IDF 계열)
+    - "정확히 이 단어가 문서에 얼마나 등장하는가"를 기준으로 점수화
+    - 정확한 용어(고유명사, 날짜, 코드 등)가 포함된 질문에 강함
+    - 의미적으로 비슷한 표현은 잡지 못함 (예: "유출" vs "노출")
+
+    [Vector 리트리버]  
+    - 임베딩(숫자 벡터) 기반 의미론적 검색 방식
+    - 질문과 문서를 각각 고차원 벡터로 변환한 뒤, 벡터 간 거리(유사도)로 검색
+    - 같은 의미의 다른 표현도 잡아냄 (예: "유출" ≈ "노출" ≈ "개인정보 침해")
+    - 정확한 키워드가 없어도 맥락상 관련 문서를 가져올 수 있음
+
+    [하이브리드 = BM25 + Vector]
+    - 두 방식의 결과를 RRF(Reciprocal Rank Fusion)로 합산
+    - 키워드 정밀도 + 의미 유연성을 동시에 확보
+    - weights=[0.5, 0.5]로 두 리트리버의 영향력을 동등하게 설정
 
     Args:
         k (int): 각 리트리버에서 반환할 문서 수
@@ -62,7 +83,8 @@ def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
     Returns:
         EnsembleRetriever: 하이브리드 리트리버 객체
     """
-    k = 6
+
+    
 
     # region BM25 리트리버 준비
     spliter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
@@ -84,10 +106,11 @@ def __get_hybrid_retriever(k=6) -> EnsembleRetriever:
     vector_retriever = db.as_retriever( k=k )
     # endregion
 
+    
     # 하이브리드(앙상블) 리트리버
     return EnsembleRetriever(
         retrievers = [ bm25_retriever, vector_retriever ],
-        weights = [ 0.5, 0.5 ],
+        weights = [ w, 1.0 - w ],
     )
 
 def __format_messages_for_summary(messages:list) -> str:
@@ -326,8 +349,13 @@ def node_hybrid_search(state:State):
         "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
     """
 
+    # 최적화중에는 최적화된 값을 사용함.
+    # 라이브중에는 상수처럼 사용
+    k = state.get( "opt_k", Config.retriever_k )
+    w = state.get( "opt_w", Config.retriever_w )
+
     queries = state.get("multi_queries", [])
-    retriever = __get_hybrid_retriever( k=6 )
+    retriever = __get_hybrid_retriever( k, w )
 
     prompt = f"""
         당신은 쿠팡 사태의 모든것을 알고 있는 전문가입니다.
@@ -364,8 +392,12 @@ def node_hybrid_search(state:State):
     # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
     score_doc.sort( key=lambda x: x[0], reverse=True )
 
+    # 최적화중에는 최적화된 값을 사용함.
+    # 라이브중에는 상수처럼 사용
+    k = state.get( "opt_top_k", Config.reranking_top_k )
+
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
-    top_scored = score_doc[: max(1, 5)]
+    top_scored = score_doc[: max(1, k) ]
 
     top_text = [text for (_, text) in top_scored]
 
@@ -407,8 +439,11 @@ def node_multiquery_search(state:State):
     except Exception:
         multi_queries = []
 
+    k = state.get( "opt_k", Config.retriever_k )
+    w = state.get( "opt_w", Config.retriever_w )
+
     mqr = MultiQueryRetriever.from_llm(
-        retriever=__get_hybrid_retriever( k=6 ),
+        retriever=__get_hybrid_retriever( k, w ),
         llm=llm,
         prompt=template,
         include_original=True
@@ -441,8 +476,10 @@ def node_multiquery_search(state:State):
     # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
     score_doc.sort( key=lambda x: x[0], reverse=True )
 
+    top_k = state.get( "opt_top_k", Config.reranking_top_k )
+
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
-    top_scored = score_doc[: max(1, 5)]
+    top_scored = score_doc[: max(1, top_k)]
 
     top_text = [text for (_, text) in top_scored]
 
