@@ -416,6 +416,7 @@ def node_hybrid_search(state:State):
 
     top_text = [text for (_, text, _) in top_scored]
     top_doc_name = [name for (_, _, name) in top_scored]
+    top_doc_name = list(set(top_doc_name)) # 중복 제거
 
     return { "documents" : top_text, "doc_names" : top_doc_name }
 
@@ -502,6 +503,7 @@ def node_multiquery_search(state:State):
 
     top_text = [text for (_, text, _) in top_scored]
     top_doc_name = [name for (_, _, name) in top_scored]
+    top_doc_name = list(set(top_doc_name)) # 중복 제거
 
     return {
         "documents": top_text,
