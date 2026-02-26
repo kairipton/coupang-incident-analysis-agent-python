@@ -44,7 +44,9 @@ def login(uid:str):
     #user.history.add_ai_message( welcome_msg )
 
     #return {"message": f"{uid}님이 로그인 했습니다." }
-    return {"message": "안녕하세요. 저는 쿠팡 유출 사태와 관련된 질문을 처리할 수 있습니다. 무엇이 궁금하신가요?"}
+    return {"message": "안녕하세요. 이 AI는 쿠팡 유출 사태와 관련된 질문을 처리할 수 있습니다. " +
+                       "포트폴리오의 소개와 사용된 기술 스택에 대한 설명은 왼쪽 하단의 안내 버튼을 통해 확인하실 수 있습니다." +
+                       "무엇이 궁금하신가요?" }
 
 @router.get("/logout")
 def logout(uid:str):
@@ -237,24 +239,6 @@ async def userchat_async(uid: str, message: str):
     #media_type = "text/event-stream" # 단순 텍스트 청크 스트림
     media_type = "application/x-ndjson"
     return StreamingResponse(response_generator(), media_type=media_type)
-
-@router.get("/reset")
-def reset(uid:str):
-    """
-    현재 게임 상태를 리셋하고 처음부터 다시 시작한다.
-
-    Args:
-        uid (str): 사용자 ID
-
-    Returns:
-        dict: 첫 페이즈의 환영 메세지
-    """
-
-    logout( uid )
-    #return login( uid )
-    
-    return "안녕하세요. 저는 쿠팡 유출 사태와 관련된 질문을 처리할 수 있습니다. 무엇이 궁금하신가요?"
-
 
 
 def __get_ai_message(response:dict[str, Any]) -> str:
