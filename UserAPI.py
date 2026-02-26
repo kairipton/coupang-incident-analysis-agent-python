@@ -127,7 +127,8 @@ async def userchat_async(uid: str, message: str):
         started_nodes = set()  # 병렬 노드를 중복 없이 추적 (set은 C#의 HashSet과 동일함)
         qa_result = {
             "query_count" : 0,
-            "ragas" : "평가 점수가 없습니다."
+            "ragas" : "평가 점수가 없습니다.",
+            "doc_names" : []
         }
 
         def _ndjson(obj: dict) -> str:
@@ -183,6 +184,7 @@ async def userchat_async(uid: str, message: str):
                         mq = output.get( "multi_queries", [] )
                         qa_result[ "query_count" ] = len(mq)
                         qa_result[ "ragas" ] = output.get( "ragas", "평가 점수가 없습니다" )
+                        qa_result[ "doc_names" ] = output.get( "doc_names", [] )
 
             elif is_chain_start and is_graph_node_start:
 

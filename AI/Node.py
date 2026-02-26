@@ -22,6 +22,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages import RemoveMessage
+from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_precision, ContextUtilization
@@ -44,6 +45,7 @@ llm_with_tool = llm.bind_tools( all_tools )
 class State(TypedDict):
     question: Annotated[str, "question"] # 원본 질문. 그래프 루프가 시작할때 입력됨.
     documents: Annotated[list, "documents"] # 멀티쿼리 리트리버로 가져온 문서들.
+    doc_names: Annotated[list, "document names"] # 멀티쿼리 리트리버로 가져온 문서들의 이름(출처)
     multi_queries: NotRequired[Annotated[list, "multi_queries"]] # 멀티쿼리로 생성된 쿼리들.
     messages: Annotated[list, add_messages] # 대화 히스토리
     summary: Annotated[str, "summary"] # 대화 요약본. 응답 후 마지막에 갱신 됨.
@@ -183,7 +185,7 @@ def __get_cross_encoder_reranker():
 # region 노드 정의
 
 """ 툴 노드. LLM이 알아서 실행하게 된다. """
-node_tools = ToolNode( all_tools )
+node_tools = ToolNode( all_tools, handle_tool_errors=True )
 
 
 
@@ -347,6 +349,7 @@ def node_hybrid_search(state:State):
 
     Returns:
         "documents" 에 검색/리랭크된 문서 텍스트 리스트를 넣음
+        "doc_names" 에 검색/리랭크된 문서 이름 리스트를 넣음
     """
 
     # 최적화중에는 최적화된 값을 사용함.
@@ -366,27 +369,39 @@ def node_hybrid_search(state:State):
     """
 
     docs = retriever.invoke( prompt )
-
-    doc_contents = []
-    for d in docs:
-        if hasattr( d, "page_content" ):
-            doc_contents.append( d.page_content )
-
-    reranker = __get_cross_encoder_reranker()
+    
 
     # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
     # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
-    pairs = [(state["question"], doc) for doc in doc_contents]
-    scores = reranker.predict( pairs )
+    #pairs = [(state["question"], doc) for doc in doc_contents]
+    pairs: list[tuple[str, str]] = []
+    doc_contents: list[str] = []
+    for d in docs:
+        if hasattr( d, "page_content" ):
+            pairs.append( (state["question"], d.page_content) )
 
+        if hasattr( d, "page_content" ):
+            doc_contents.append( d.page_content )
+        
+    
+    # 점수 계산
+    reranker = __get_cross_encoder_reranker()
+    scores = reranker.predict( pairs )
+    
     # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
     # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
     scores_as_float = [float(s) for s in scores]
 
+    # 문서 제목
+    doc_names: list[str] = []
+    for d in docs:
+        if hasattr( d, "page_content" ):
+            doc_names.append( d.metadata.get( "source", "출처 불명" ) )
+
     # zip은 두개 리스트가 가진 원소를 하나씩 묶어 튜플로 만들어줌.
     # 다만, zip으로 묶을 준비만 하고, 실제 리스트로 만들려면 list로 변환 해야 함.
     # 결과적으로 튜플(score, doc) 리스트가 생김.
-    score_doc = list( zip(scores_as_float, doc_contents) )
+    score_doc = list( zip(scores_as_float, doc_contents, doc_names) )
     
     # 리스트가 가진 튜플의 첫번째 값을 키로 사용 하여 정렬.
     # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
@@ -399,9 +414,10 @@ def node_hybrid_search(state:State):
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, k) ]
 
-    top_text = [text for (_, text) in top_scored]
+    top_text = [text for (_, text, _) in top_scored]
+    top_doc_name = [name for (_, _, name) in top_scored]
 
-    return { "documents" : top_text }
+    return { "documents" : top_text, "doc_names" : top_doc_name }
 
 
 def node_multiquery_search(state:State):
@@ -451,16 +467,19 @@ def node_multiquery_search(state:State):
     
     docs = mqr.invoke( state["question"] )
     
-    doc_contents = []
+    pairs: list[tuple[str, str]] = []
+    doc_contents: list[str] = []
+    doc_names: list[str] = []
     for d in docs:
         if hasattr( d, "page_content" ):
+            pairs.append( (state["question"], d.page_content) )
             doc_contents.append( d.page_content )
+            doc_names.append( d.metadata.get( "source", "출처 불명" ) )
 
     reranker = __get_cross_encoder_reranker()
 
     # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
     # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
-    pairs = [(state["question"], doc) for doc in doc_contents]
     scores = reranker.predict( pairs )
 
     # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
@@ -469,8 +488,8 @@ def node_multiquery_search(state:State):
 
     # zip은 두개 리스트가 가진 원소를 하나씩 묶어 튜플로 만들어줌.
     # 다만, zip으로 묶을 준비만 하고, 실제 리스트로 만들려면 list로 변환 해야 함.
-    # 결과적으로 튜플(score, doc) 리스트가 생김.
-    score_doc = list( zip(scores_as_float, doc_contents) )
+    # 결과적으로 튜플(score, doc, name) 리스트가 생김.
+    score_doc = list( zip(scores_as_float, doc_contents, doc_names) )
     
     # 리스트가 가진 튜플의 첫번째 값을 키로 사용 하여 정렬.
     # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
@@ -481,10 +500,12 @@ def node_multiquery_search(state:State):
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, top_k)]
 
-    top_text = [text for (_, text) in top_scored]
+    top_text = [text for (_, text, _) in top_scored]
+    top_doc_name = [name for (_, _, name) in top_scored]
 
     return {
         "documents": top_text,
+        "doc_names": top_doc_name,
         "multi_queries": multi_queries,
     }
 

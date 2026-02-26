@@ -155,8 +155,8 @@ def run_optimize():
     print( "optuna 대쉬보드에서 결과를 확인 하셈!" )
 
 if __name__ == "__main__":
-    #run_test()
-    run_optimize()
+    run_test()
+    #run_optimize()
 
 
 
