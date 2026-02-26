@@ -414,11 +414,17 @@ def node_hybrid_search(state:State):
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, k) ]
 
+    from pathlib import Path
+
     top_text = [text for (_, text, _) in top_scored]
     top_doc_name = [name for (_, _, name) in top_scored]
     top_doc_name = list(set(top_doc_name)) # 중복 제거
+    doc_names: list[str] = []
+    for dn in top_doc_name:
+        doc_names.append( Path( dn ).name )
+    
 
-    return { "documents" : top_text, "doc_names" : top_doc_name }
+    return { "documents" : top_text, "doc_names" : doc_names }
 
 
 def node_multiquery_search(state:State):
