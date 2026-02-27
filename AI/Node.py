@@ -25,7 +25,7 @@ from langchain_core.messages import RemoveMessage
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 from ragas import evaluate
-from ragas.metrics import faithfulness, answer_relevancy, context_precision, ContextUtilization
+from ragas.metrics import Faithfulness, answer_relevancy, context_precision, ContextUtilization
 from datasets import Dataset
 from pprint import pprint
 
@@ -611,11 +611,29 @@ def node_evaluate(state:State):
     # 일부 모델/환경에서는 n>1이 무시되어 내부에서 IndexError가 발생할 수 있어 strictness=1로 낮춥니다.
     from ragas.metrics import AnswerRelevancy
 
-    metrics = [
-        faithfulness,  # 충실도: 답변이 컨텍스트에 근거하는가?
-        AnswerRelevancy(strictness=1),  # 답변 관련성: 질문에 제대로 답했는가?
-    ]
+    # 각 메트릭의 내부 프롬프트 instruction 끝에 한국어 응답 지시를 추가.
+    # (예시는 그대로 두고 instruction만 수정하는 최소한의 방식)
+    faithfulness_metric = Faithfulness()
+    faithfulness_metric.statement_generator_prompt.instruction += " **반드시 한국어로 응답하세요.**"
+    faithfulness_metric.nli_statements_prompt.instruction += " **반드시 한국어로 응답하세요.**"
 
+    # AnswerRelevancy는 가상 질문 생성 시 한국어로 하지 않으면
+    # user_input(한국어)과의 임베딩 유사도가 0에 수렴하므로 반드시 한국어 지시가 필요.
+    answer_relevancy_metric = AnswerRelevancy(strictness=1)
+    answer_relevancy_metric.question_generation.instruction += " **반드시 한국어로 질문을 생성하세요.**"
+
+    metrics = [
+        faithfulness_metric,  # 충실도: 답변이 컨텍스트에 근거하는가?
+        answer_relevancy_metric,  # 답변 관련성: 질문에 제대로 답했는가?
+    ]
+    
+    # 그래서 답변 관련성이 0 뜨는 문제가 발생.
+    # metrics = [
+    #     fathfullness,  # 충실도: 답변이 컨텍스트에 근거하는가?
+    #     AnswerRelevancy(strictness=1),  # 답변 관련성: 질문에 제대로 답했는가?
+    # ]
+
+    
     # reference(정답)가 있을 때만 context_precision을 포함
     # reference가 없으면 "정답 기반" 평가가 의미가 약해지므로 context_utilization(무참조)을 사용
     metrics.append(context_precision if has_reference else ContextUtilization())
