@@ -632,7 +632,7 @@ def node_evaluate(state:State):
 
         # 평가용 LLM은 답변 생성용과 분리하는 게 안전합니다.
         # gpt-5/o-계열 등 temperature 제약 모델을 위해 temperature=1로 고정.
-        eval_llm = ChatOpenAI(model=Config.llm_model_name, temperature=1)
+        eval_llm = ChatOpenAI(model=Config.llm_model_name, temperature=0)
 
         # NOTE: ragas 0.4.3에는 EvaluationResult 생성 시(트레이스 파싱) root_traces가 비어
         # IndexError가 발생하는 케이스가 있습니다. return_executor=True로 EvaluationResult

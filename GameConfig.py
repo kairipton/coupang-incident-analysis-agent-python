@@ -5,9 +5,12 @@ query_llm_model_name = "gpt-4o-mini"
 embedding_model_name ="text-embedding-3-large"
 doc_folder_path = "./Knowledge Base"
 
-retriever_w = 0.5   # 하이브리드 서치에 사용되는 리트리버 가중치
-retriever_k = 5     # 리트리버가 가져오는 문서 수 (BM25, Vector 각각)
-reranking_top_k = 5 # 리랭킹 후 최종 문서 수
+# retriever_w = 0.5   # 하이브리드 서치에 사용되는 리트리버 가중치
+# retriever_k = 5     # 리트리버가 가져오는 문서 수 (BM25, Vector 각각)
+# reranking_top_k = 5 # 리랭킹 후 최종 문서 수
+retriever_w = 0.39963209507789
+retriever_k = 15
+reranking_top_k = 7
 
 # Cross-Encoder 리랭커(질문, 문서) 쌍을 직접 점수화해서 재정렬하는 모델
 # - 한국어/영어 혼용까지 고려해서 다국어 MS MARCO 계열을 기본값으로 둠
