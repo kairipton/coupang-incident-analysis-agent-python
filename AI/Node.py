@@ -611,16 +611,28 @@ def node_evaluate(state:State):
     # 일부 모델/환경에서는 n>1이 무시되어 내부에서 IndexError가 발생할 수 있어 strictness=1로 낮춥니다.
     from ragas.metrics import AnswerRelevancy
 
-    # 각 메트릭의 내부 프롬프트 instruction 끝에 한국어 응답 지시를 추가.
-    # (예시는 그대로 두고 instruction만 수정하는 최소한의 방식)
+    # 각 메트릭의 instruction을 완전히 한국어로 교체.
+    # (영어 원문 + 한국어 추가 방식은 LLM이 판단 기준을 혼동할 수 있으므로 한국어로 덮어씀)
     faithfulness_metric = Faithfulness()
-    faithfulness_metric.statement_generator_prompt.instruction += " **반드시 한국어로 응답하세요.**"
-    faithfulness_metric.nli_statements_prompt.instruction += " **반드시 한국어로 응답하세요.**"
+    faithfulness_metric.statement_generator_prompt.instruction = (
+        "질문과 답변이 주어지면, 답변의 각 문장을 분석하여 "
+        "하나 이상의 완전히 이해 가능한 진술문으로 분해하세요. "
+        "어떤 진술문에도 대명사를 사용하지 마세요. 결과를 JSON 형식으로 출력하세요."
+    )
+    faithfulness_metric.nli_statements_prompt.instruction = (
+        "주어진 컨텍스트를 기반으로 각 진술문의 충실도를 판단하세요. "
+        "컨텍스트에서 직접 추론 가능하면 verdict=1, 그렇지 않으면 verdict=0을 반환하세요."
+    )
 
     # AnswerRelevancy는 가상 질문 생성 시 한국어로 하지 않으면
-    # user_input(한국어)과의 임베딩 유사도가 0에 수렴하므로 반드시 한국어 지시가 필요.
+    # user_input(한국어)과의 임베딩 유사도가 0에 수렴하므로 반드시 한국어로 교체.
+    # noncommittal: 답변이 애매하거나 모른다는 표현이면 1, 명확하면 0.
     answer_relevancy_metric = AnswerRelevancy(strictness=1)
-    answer_relevancy_metric.question_generation.instruction += " **반드시 한국어로 질문을 생성하세요.**"
+    answer_relevancy_metric.question_generation.instruction = (
+        "주어진 답변에 대한 질문을 한국어로 생성하세요. "
+        "답변이 명확하고 구체적이면 noncommittal=0, "
+        "모르겠다거나 애매하고 회피적인 표현이면 noncommittal=1로 표시하세요."
+    )
 
     metrics = [
         faithfulness_metric,  # 충실도: 답변이 컨텍스트에 근거하는가?

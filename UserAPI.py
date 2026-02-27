@@ -185,10 +185,10 @@ async def userchat_async(uid: str, message: str):
                     if isinstance( output, dict ):
                         mq = output.get( "multi_queries", [] )
                         qa_result[ "query_count" ] = len(mq)
-                        qa_result[ "ragas" ] = output.get( "ragas", "평가 점수가 없습니다" )
+                        qa_result[ "ragas" ] = output.get( "ragas", {} )
                         qa_result[ "doc_names" ] = output.get( "doc_names", [] )
 
-                        #print( f"멀티 쿼리 수: {qa_result['query_count']}, RAGAS 점수: {qa_result['ragas']}, 활용된 문서: {qa_result['doc_names']}" )
+                        print( f"멀티 쿼리 수: {qa_result['query_count']}, RAGAS 점수: {qa_result['ragas']}, 활용된 문서: {qa_result['doc_names']}" )
 
             elif is_chain_start and is_graph_node_start:
 
