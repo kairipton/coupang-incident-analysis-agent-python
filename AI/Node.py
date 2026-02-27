@@ -38,7 +38,7 @@ dotenv.load_dotenv()
 PROJECT_ROOT = Utils.find_project_root( __file__ )
 
 # 도구까지 바인딩 시켜놓음
-llm = ChatOpenAI( model=Config.llm_model_name )
+llm = ChatOpenAI( model=Config.llm_model_name, temperature=0 )
 llm_with_tool = llm.bind_tools( all_tools )
 
 
@@ -333,7 +333,7 @@ def node_multiquery(state:State):
     """
 
 
-    mq_llm = ChatOpenAI( model=Config.query_llm_model_name, temperature=0.5 )
+    mq_llm = ChatOpenAI( model=Config.query_llm_model_name, temperature=0 )
     answer = mq_llm.invoke( prompt )
     answer = getattr(answer, "content", "") or str(answer)
     answers = answer.splitlines()
@@ -455,7 +455,7 @@ def node_multiquery_search(state:State):
     # 그러므로 검색 후 적절히 걸러주는게 좋다. (Rerank 등..)
     # Unity로 전달할 메타데이터용: 멀티쿼리 생성 결과를 state에 남김
     try:
-        mq_llm = ChatOpenAI(model=Config.query_llm_model_name, temperature=0.5)
+        mq_llm = ChatOpenAI(model=Config.query_llm_model_name, temperature=0)
         mq_answer = mq_llm.invoke(template.format(question=state["question"]))
         mq_text = getattr(mq_answer, "content", "") or str(mq_answer)
         multi_queries = [q.strip() for q in mq_text.splitlines() if q.strip()]
