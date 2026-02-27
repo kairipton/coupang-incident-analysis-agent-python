@@ -1,7 +1,7 @@
 #llm_model_name ="gpt-5-mini"
 #query_llm_model_name = "gpt-4.1-nano"
 llm_model_name ="gpt-4.1-nano"
-query_llm_model_name = "gpt-4o-mini"
+query_llm_model_name = "gpt-4.1-nano"
 embedding_model_name ="text-embedding-3-large"
 doc_folder_path = "./Knowledge Base"
 
