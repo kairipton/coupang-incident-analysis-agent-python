@@ -28,6 +28,7 @@ from ragas import evaluate
 from ragas.metrics import Faithfulness, answer_relevancy, context_precision, ContextUtilization
 from datasets import Dataset
 from pprint import pprint
+import dspy
 
 import Utils.Utils as Utils
 import GameConfig as Config
@@ -41,7 +42,13 @@ PROJECT_ROOT = Utils.find_project_root( __file__ )
 llm = ChatOpenAI( model=Config.llm_model_name, temperature=0 )
 llm_with_tool = llm.bind_tools( all_tools )
 
+# DSPy 설정
+api_key = os.getenv( "OPENAI_API_KEY", "" )
+dspy_lm = dspy.LM( model=f"openai/{Config.llm_model_name}", api_key=api_key, temperature=0.0 )
+dspy.configure( lm=dspy_lm )
 
+
+# region LangGraph State
 class State(TypedDict):
     question: Annotated[str, "question"] # 원본 질문. 그래프 루프가 시작할때 입력됨.
     documents: Annotated[list, "documents"] # 멀티쿼리 리트리버로 가져온 문서들.
@@ -56,6 +63,28 @@ class State(TypedDict):
     opt_k: NotRequired[Annotated[int, "number of retrieved documents"]] # 리트리버가 가져온 문서 수 (디버깅/평가용)
     opt_top_k: NotRequired[Annotated[int, "number of documents after reranking"]] # 리랭킹 후 최종 문서 수 (디버깅/평가용)
     opt_w: NotRequired[Annotated[float, "weight for hybrid retriever"]] # 하이브리드 리트리버에서 가중치 (디버깅/평가용)
+# endregion
+
+
+# region DSPy Signature & Train set
+class MultiQuerySignature(dspy.Signature):
+    """사용자 질문을 분석하여 검색 쿼리를 3~5개 생성합니다."""
+    input: str = dspy.InputField(desc="사용자의 질문")
+    queries: list[str] = dspy.OutputField(desc="생성된 검색 쿼리 리스트")
+
+class SummarySignature(dspy.Signature):
+    """이전 대화의 요약본과 현재 대화 메세지를 검토하여 새로운 대화 요약본으로 업데이트 합니다.
+    도구를 사용한 경우 사용 이유와 결과도 요약에 포함해세요.
+    요약본만 출력하세요. """
+    summary: str = dspy.InputField( desc="이전 대화 요약본" )
+    message: str = dspy.InputField( desc="현재 대화 메시지" )
+    new_summary: str = dspy.OutputField( desc="업데이트된 대화 요약본" )
+
+mq_classifier = dspy.Predict(MultiQuerySignature)
+summary_classsifier = dspy.Predict(SummarySignature)
+
+
+#endregion
 
 # region 유틸리티
 def __get_hybrid_retriever(k=6, w=0.5) -> EnsembleRetriever:
@@ -267,7 +296,6 @@ def node_route_next(state:State):
     return "need_tools" if tool_calls else "NONE"
 
 
-
 def node_final_answer(state: State):
     """
     최종 답변 노드.
@@ -324,23 +352,30 @@ def node_multiquery(state:State):
     """
 
 
-    prompt = f"""
-        사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
-        각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
-        각 쿼리는 한줄씩, 쿼리만 출력하세요.
+    # prompt = f"""
+    #     사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
+    #     각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
+    #     각 쿼리는 한줄씩, 쿼리만 출력하세요.
                                  
-        질문: {state["question"]}
-    """
+    #     질문: {state["question"]}
+    # """
 
-
-    mq_llm = ChatOpenAI( model=Config.query_llm_model_name, temperature=0 )
-    answer = mq_llm.invoke( prompt )
-    answer = getattr(answer, "content", "") or str(answer)
-    answers = answer.splitlines()
+    # mq_llm = ChatOpenAI( model=Config.query_llm_model_name, temperature=0 )
+    # answer = mq_llm.invoke( prompt )
+    # answer = getattr(answer, "content", "") or str(answer)
+    # answers = answer.splitlines()
     
+    # return {
+    #     "multi_queries": answers
+    # }
+
+    # DSPy로 프롬프트 입력 자동화.
+    prediction: dspy.Prediction = mq_classifier.forward( input=state["question"] )
+
     return {
-        "multi_queries": answers
+        "multi_queries": prediction.queries
     }
+    
 
 def node_hybrid_search(state:State):
     """
@@ -519,6 +554,7 @@ def node_multiquery_search(state:State):
 
 
 
+
 def node_summary_conversation(state: State):
     """
     대화 내역 요약.
@@ -533,26 +569,32 @@ def node_summary_conversation(state: State):
     all_messages: list[BaseMessage] = state.get( "messages", [] )
     messages = __format_messages_for_summary( all_messages )
 
-    prompt = f"""
-        아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
-        [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
-        출력시 대화 요약된 대화 내역만 출력 하세요.
-        현재 대화 세션에서 사용한 도구가 있다면 도구를 사용한 이유와, 그 결과도 요약 내용에 포함 하세요.
+    # prompt = f"""
+    #     아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
+    #     [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
+    #     출력시 대화 요약된 대화 내역만 출력 하세요.
+    #     현재 대화 세션에서 사용한 도구가 있다면 도구를 사용한 이유와, 그 결과도 요약 내용에 포함 하세요.
         
-        [요약본]
-        {summary}
+    #     [요약본]
+    #     {summary}
 
-        [대화 내역]
-        {messages}
-    """
+    #     [대화 내역]
+    #     {messages}
+    # """
 
-    # 대화 요약 생성.
-    answer = llm.invoke( prompt )
+    # # 대화 요약 생성.
+    # answer = llm.invoke( prompt )
 
-    print( f"대화 요약: {getattr(answer, 'content', str(answer))}" )
+    # print( f"대화 요약: {getattr(answer, 'content', str(answer))}" )
 
-    return { 
-        "summary": getattr( answer, "content", str(answer) ) 
+    # return { 
+    #     "summary": getattr( answer, "content", str(answer) ) 
+    # }
+
+    prediction: dspy.Prediction = summary_classsifier.forward( summary=summary, message=messages )
+
+    return {
+        "summary": prediction.new_summary
     }
 
 

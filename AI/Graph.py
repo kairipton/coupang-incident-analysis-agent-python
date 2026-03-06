@@ -198,9 +198,9 @@ def run_evaluate():
     print( f"\n저장 완료: {filename}" )
 
 if __name__ == "__main__":
-    #run_test()
+    run_test()
     #run_evaluate()
-    run_optimize()
+    #run_optimize()
 
 
 
