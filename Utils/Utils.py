@@ -19,7 +19,7 @@ from langchain_community.document_loaders import TextLoader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-import GameConfig as Config 
+import config as Config 
 
 def load_vector_db(remake_db=False) -> Chroma:
     """

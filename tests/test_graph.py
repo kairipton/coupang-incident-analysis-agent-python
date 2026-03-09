@@ -11,7 +11,7 @@ from pprint import pprint
 
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
-import Node
+import AI.Node as Node
 
 
 

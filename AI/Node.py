@@ -31,8 +31,8 @@ from pprint import pprint
 import dspy
 
 import Utils.Utils as Utils
-import GameConfig as Config
-from SystemManager import all_tools
+import config as Config
+from AI.tools import all_tools
 
 dotenv.load_dotenv()
 

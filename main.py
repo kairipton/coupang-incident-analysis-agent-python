@@ -14,16 +14,14 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import asyncio
 
-import SystemManager
 from Utils import User
 import AI.Agent as Agent
 import Utils.Utils as Utils
-import GameConfig as config
-import UserAPI as API
-
-from fastapi.staticfiles import StaticFiles
+import config as Config
+import router as API
 
 app = FastAPI()
 

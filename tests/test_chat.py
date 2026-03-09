@@ -2,7 +2,7 @@ import os
 import dotenv
 dotenv.load_dotenv()
 
-import UserAPI
+import router as UserAPI
 import asyncio
 from fastapi.responses import StreamingResponse
 import Utils.Utils as Utils

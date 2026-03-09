@@ -35,3 +35,6 @@ Thumbs.db
 # 데이터베이스/벡터 DB 저장소 (필요 시 제외)
 /data/
 /db/
+
+# Optuna 하이퍼파라미터 튜닝 결과
+optuna_results*.db

@@ -2,7 +2,7 @@
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from Utils import User
-import GameConfig as Config
+import config as Config
 
 
 # @tool

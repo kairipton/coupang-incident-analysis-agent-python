@@ -1,9 +1,0 @@
-{
-  "timestamp": "20260227_110330",
-  "num_questions": 15,
-  "averages": {
-    "faithfulness": 0.6875792725792726,
-    "answer_relevancy": 0.3310012549482578,
-    "context_utilization": 0.8055555555299443
-  }
-}
