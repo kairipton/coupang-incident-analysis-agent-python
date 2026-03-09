@@ -38,10 +38,11 @@ class Agent:
         self.memory = Agent._memory_store[uid]
 
         """ 그래프에 쓰일 노드들을 정의 함"""
+        self.builder.add_node( "question", Node.node_input_question )
         self.builder.add_node( "multi_query", Node.node_multiquery_search, metadata={ "unity_label": "Mutli Querying..." } )
         self.builder.add_node( "hybrid_search", Node.node_hybrid_search, metadata={ "unity_label": "Hybrid Searching..." } )
         self.builder.add_node( "tool_call", Node.node_tool_call, metadata={ "unity_label": "Decision Tool Calling..." } )
-        self.builder.add_node( "route_next", Node.node_route_next, metadata={ "unity_label": "Decision Tool Calling..." } )
+        #self.builder.add_node( "route_next", Node.node_route_next, metadata={ "unity_label": "Decision Tool Calling..." } )
         self.builder.add_node( "tools", Node.node_tools, metadata={ "unity_label": "Using Tools..." } )
         self.builder.add_node( "final_answer", Node.node_final_answer, metadata={ "unity_label": "Generating Answer..." } )
         self.builder.add_node( "summary", Node.node_summary_conversation, metadata={ "unity_label": "Summarying messages..." } )
@@ -49,6 +50,7 @@ class Agent:
         self.builder.add_node( "graph_end", Node.node_graph_end, metadata={ "unity_label": "DONE!" } )
 
         """ 노드 연결 시작 """
+        self.builder.add_edge( START, "question" )
         self.builder.add_edge( "question", "multi_query" )
         self.builder.add_edge( "multi_query", "hybrid_search" )
         self.builder.add_edge( "hybrid_search", "tool_call" )
