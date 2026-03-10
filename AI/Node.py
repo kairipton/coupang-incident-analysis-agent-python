@@ -27,8 +27,11 @@ from sentence_transformers import CrossEncoder
 from ragas import evaluate
 from ragas.metrics import Faithfulness, answer_relevancy, context_precision, ContextUtilization
 from datasets import Dataset
+from openai import RateLimitError, OpenAIError, APIError, Timeout, APIConnectionError
+
 from pprint import pprint
 import dspy
+from typing import Any
 
 import Utils.Utils as Utils
 import config as Config
@@ -95,7 +98,7 @@ def __get_bm25_retriever(k: int) -> BM25Retriever:
     Returns:
         BM25Retriever: BM25 리트리버 객체
     """
-
+    
     spliter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
     chunks: list[Document] = spliter.split_documents( Utils.get_documents() )
     for c in chunks:
@@ -289,7 +292,18 @@ def node_tool_call(state: State):
     # 따라서, 시스템 프롬프트를 먼저 만들고, 이후 대화 내역을 뒤로 붙혀서 리스트를 tostring 처리 없이 온전히 붙히는게 좋음.
     msg = [SystemMessage(content=prompt)] + state["messages"]
 
-    decision = llm_with_tool.invoke( msg )
+    try:
+        decision = llm_with_tool.invoke( msg )
+    except RateLimitError as e:
+        return { "messages": [AIMessage(content=f"서버 오류 발생: {e}")] }
+    except Timeout as e:
+        return { "messages": [AIMessage(content=f"서버 오류 발생: {e}")] }
+    except APIConnectionError as e:
+        return { "messages": [AIMessage(content=f"서버 오류 발생: {e}")] }
+    except APIError as e:
+        return { "messages": [AIMessage(content=f"서버 오류 발생: {e}")] }
+    except Exception as e:
+        return { "messages": [AIMessage(content=f"서버 오류 발생: {e}")] }
 
     # 사용할 도구가 없으면 그냥 넘김.
     # - tool_calls가 있으면 ToolNode가 실행할 수 있도록 messages에 decision(AIMessage)을 추가
@@ -345,18 +359,29 @@ def node_final_answer(state: State):
 
     # 최종 답변은 스트리밍으로 생성(청크를 소비하며 content를 누적)
     full_content = ""
+    answer = None
     try:
         for chunk in llm.stream(msg):
             if isinstance(chunk, str):
                 full_content += chunk
             else:
                 full_content += getattr(chunk, "content", "") or ""
-    except Exception:
-        # 스트리밍 실패 시(모델/환경 이슈 등) 안전하게 단발 호출로 폴백
-        answer = llm.invoke(msg)
-        return {"messages": [answer]}
 
-    answer = AIMessage(content=full_content)
+    except RateLimitError as e:
+        answer = { "messages" : f"서버 오류 발생: {e}" }
+    except Timeout as e:
+        answer = { "messages" : f"서버 오류 발생: {e}" }
+    except APIConnectionError as e:
+        answer = { "messages" : f"서버 오류 발생: {e}" }
+    except APIError as e:
+        answer = { "messages" : f"서버 오류 발생: {e}" }
+    except Exception as e:
+        answer = { "messages" : f"서버 오류 발생: {e}" }
+
+    if answer is None:
+        answer = AIMessage(content=full_content)
+    else:
+        answer = AIMessage( content = answer["messages"] )
     
     return {"messages": [answer]}
 
@@ -391,11 +416,18 @@ def node_multiquery(state:State):
     #endregion 
 
     # DSPy로 프롬프트 입력 자동화.
-    prediction: dspy.Prediction = mq_classifier.forward( input=state["question"] )
-
-    return {
-        "multi_queries": prediction.queries
-    }
+    try:
+        prediction: dspy.Prediction = mq_classifier.forward( input=state["question"] )
+        return { "multi_queries": prediction.queries }
+    except RateLimitError as e:
+        print(f"[MultiQuery] 오류: {e}")
+        return { "multi_queries": [] }
+    except APIError as e:
+        print(f"[MultiQuery] 오류: {e}")
+        return { "multi_queries": [] }
+    except Exception as e:
+        print(f"[MultiQuery] 오류: {e}")
+        return { "multi_queries": [] }
     
 
 def node_hybrid_search(state:State):
@@ -424,7 +456,12 @@ def node_hybrid_search(state:State):
         {queries}
     """
 
-    docs = retriever.invoke( prompt )
+    docs: list[Document] = []
+    try:
+        docs = retriever.invoke( prompt )
+    except Exception as e:
+        print(f"[Hybrid Search] 검색 오류: {e}")
+        docs = []
     
 
     # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
@@ -442,11 +479,22 @@ def node_hybrid_search(state:State):
     
     # 점수 계산
     reranker = __get_cross_encoder_reranker()
-    scores = reranker.predict( pairs )
+    error: Exception = None
+    try:
+        scores = reranker.predict( pairs )
+    except RuntimeError as e:
+        error = e
+        print(f"[Reranker] 오류: {e}")
+    except ValueError as e:
+        error = e
+        print(f"[Reranker] 오류: {e}")
+    except Exception as e:
+        error = e
+        print(f"[Reranker] 오류: {e}")
     
     # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
     # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
-    scores_as_float = [float(s) for s in scores]
+    scores_as_float = [float(s) for s in scores] if error is None else [0.0] * len( pairs )
 
     # 문서 제목
     doc_names: list[str] = []
@@ -515,7 +563,14 @@ def node_multiquery_search(state:State):
         mq_answer = mq_llm.invoke(template.format(question=state["question"]))
         mq_text = getattr(mq_answer, "content", "") or str(mq_answer)
         multi_queries = [q.strip() for q in mq_text.splitlines() if q.strip()]
-    except Exception:
+    except RateLimitError as e:
+        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
+        multi_queries = []
+    except APIError as e:
+        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
+        multi_queries = []
+    except Exception as e:
+        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
         multi_queries = []
 
     k = state.get( "opt_k", Config.retriever_k )
@@ -528,7 +583,12 @@ def node_multiquery_search(state:State):
         include_original=True
     )
     
-    docs = mqr.invoke( state["question"] )
+    docs: list[Document] = []
+    try:
+        docs = mqr.invoke( state["question"] )
+    except Exception as e:
+        print(f"[MultiQuerySearch] 검색 오류: {e}")
+        docs = []
     
     pairs: list[tuple[str, str]] = []
     doc_contents: list[str] = []
@@ -541,13 +601,20 @@ def node_multiquery_search(state:State):
 
     reranker = __get_cross_encoder_reranker()
 
-    # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
-    # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
-    scores = reranker.predict( pairs )
+    scores = []
+    scores_as_float = []
+    try:
+        # Cross-Encoder는 (question, doc)을 "같이" 넣고 점수를 예측함
+        # 점수는 보통 "클수록 더 관련 있음"을 의미하며, 스케일은 모델마다 다름
+        scores = reranker.predict( pairs )
 
-    # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
-    # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
-    scores_as_float = [float(s) for s in scores]
+        # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
+        # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
+        scores_as_float = [float(s) for s in scores]
+    except Exception as e:
+        print(f"[MultiQuerySearch] 리랭킹 오류: {e}")
+        scores = [0.0] * len( pairs )        
+        scores_as_float = [0.0] * len(pairs)
 
     # zip은 두개 리스트가 가진 원소를 하나씩 묶어 튜플로 만들어줌.
     # 다만, zip으로 묶을 준비만 하고, 실제 리스트로 만들려면 list로 변환 해야 함.
@@ -614,11 +681,18 @@ def node_summary_conversation(state: State):
     # }
     # endregion
 
-    prediction: dspy.Prediction = summary_classsifier.forward( summary=summary, message=messages )
-
-    return {
-        "summary": prediction.new_summary
-    }
+    try:
+        prediction: dspy.Prediction = summary_classsifier.forward( summary=summary, message=messages )
+        return { "summary": prediction.new_summary }
+    except RateLimitError as e:
+        print(f"[Summary] 오류: {e}")
+        return { "summary": summary }
+    except APIError as e:
+        print(f"[Summary] 오류: {e}")
+        return { "summary": summary }
+    except Exception as e:
+        print(f"[Summary] 오류: {e}")
+        return { "summary": summary }
 
 
 

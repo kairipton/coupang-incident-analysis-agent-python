@@ -48,6 +48,9 @@ tavily-python
 # 베이지안 최적화 (하이퍼파라미터 튜닝)
 optuna
 
+# 테스트
+pytest
+
 # DSPy (프롬프트 자동 최적화 프레임워크)
 dspy
 
