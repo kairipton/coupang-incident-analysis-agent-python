@@ -70,8 +70,8 @@ def calculate_reporting_delay(start_time:str, report_time:str):
     법적 위반 여부를 판단할 떄 사용할 수 있습니다.
 
     Args:
-        start_time(str): 사고 인지 시간 (예: "2025-11-17T16:00:00Z")
-        report_time(str): 신고 시점 (예: 예: "2025-11-19 21:35")
+        start_time(str): 사고 인지 시간 (예: "2025-11-17 16:00")
+        report_time(str): 신고 시점 (예: "2025-11-19 21:35")
 
     Returns:
         dict: 신고 지연 시간과 법적 위반 여부를 포함하는 딕셔너리

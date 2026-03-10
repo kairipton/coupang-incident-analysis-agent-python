@@ -1,10 +1,13 @@
 import os
 import sys
 import json
+import logging
 from pathlib import Path
 import ast
 
 from functools import lru_cache
+
+logger = logging.getLogger(__name__)
 sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
 
 import dotenv
@@ -39,7 +42,7 @@ from AI.tools import all_tools
 
 dotenv.load_dotenv()
 
-PROJECT_ROOT = Utils.find_project_root( __file__ )
+#PROJECT_ROOT = Utils.find_project_root( __file__ )
 
 # 도구까지 바인딩 시켜놓음
 llm = ChatOpenAI( model=Config.llm_model_name, temperature=0 )
@@ -420,13 +423,13 @@ def node_multiquery(state:State):
         prediction: dspy.Prediction = mq_classifier.forward( input=state["question"] )
         return { "multi_queries": prediction.queries }
     except RateLimitError as e:
-        print(f"[MultiQuery] 오류: {e}")
+        logger.warning(f"[MultiQuery] 오류: {e}")
         return { "multi_queries": [] }
     except APIError as e:
-        print(f"[MultiQuery] 오류: {e}")
+        logger.warning(f"[MultiQuery] 오류: {e}")
         return { "multi_queries": [] }
     except Exception as e:
-        print(f"[MultiQuery] 오류: {e}")
+        logger.warning(f"[MultiQuery] 오류: {e}")
         return { "multi_queries": [] }
     
 
@@ -460,7 +463,7 @@ def node_hybrid_search(state:State):
     try:
         docs = retriever.invoke( prompt )
     except Exception as e:
-        print(f"[Hybrid Search] 검색 오류: {e}")
+        logger.warning(f"[Hybrid Search] 검색 오류: {e}")
         docs = []
     
 
@@ -476,25 +479,27 @@ def node_hybrid_search(state:State):
         if hasattr( d, "page_content" ):
             doc_contents.append( d.page_content )
         
+    if not pairs:
+        logger.warning("[Hybrid Search] 검색된 문서 없음")
     
     # 점수 계산
     reranker = __get_cross_encoder_reranker()
-    error: Exception = None
+    error_in_predict: Exception = None
     try:
         scores = reranker.predict( pairs )
     except RuntimeError as e:
-        error = e
-        print(f"[Reranker] 오류: {e}")
+        error_in_predict = e
+        logger.warning(f"[Reranker] 오류: {e}")
     except ValueError as e:
-        error = e
-        print(f"[Reranker] 오류: {e}")
+        error_in_predict = e
+        logger.warning(f"[Reranker] 오류: {e}")
     except Exception as e:
-        error = e
-        print(f"[Reranker] 오류: {e}")
+        error_in_predict = e
+        logger.warning(f"[Reranker] 오류: {e}")
     
     # scores는 모델 출력이라 numpy 배열/torch 텐서 같은 형태로 올 수 있습니다.
     # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
-    scores_as_float = [float(s) for s in scores] if error is None else [0.0] * len( pairs )
+    scores_as_float = [float(s) for s in scores] if error_in_predict is None else [0.0] * len( pairs )
 
     # 문서 제목
     doc_names: list[str] = []
@@ -517,8 +522,6 @@ def node_hybrid_search(state:State):
 
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, k) ]
-
-    from pathlib import Path
 
     top_text = [text for (_, text, _) in top_scored]
     top_doc_name = [name for (_, _, name) in top_scored]
@@ -564,13 +567,13 @@ def node_multiquery_search(state:State):
         mq_text = getattr(mq_answer, "content", "") or str(mq_answer)
         multi_queries = [q.strip() for q in mq_text.splitlines() if q.strip()]
     except RateLimitError as e:
-        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
+        logger.warning(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
         multi_queries = []
     except APIError as e:
-        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
+        logger.warning(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
         multi_queries = []
     except Exception as e:
-        print(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
+        logger.warning(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
         multi_queries = []
 
     k = state.get( "opt_k", Config.retriever_k )
@@ -587,7 +590,7 @@ def node_multiquery_search(state:State):
     try:
         docs = mqr.invoke( state["question"] )
     except Exception as e:
-        print(f"[MultiQuerySearch] 검색 오류: {e}")
+        logger.warning(f"[MultiQuerySearch] 검색 오류: {e}")
         docs = []
     
     pairs: list[tuple[str, str]] = []
@@ -598,6 +601,9 @@ def node_multiquery_search(state:State):
             pairs.append( (state["question"], d.page_content) )
             doc_contents.append( d.page_content )
             doc_names.append( d.metadata.get( "source", "출처 불명" ) )
+
+    if not pairs:
+        logger.warning("[MultiQuerySearch] 검색된 문서 없음")
 
     reranker = __get_cross_encoder_reranker()
 
@@ -612,7 +618,7 @@ def node_multiquery_search(state:State):
         # 아래에서 float(...)로 한 번 정규화해두면, 정렬/출력/로그가 다루기 쉬워집니다.
         scores_as_float = [float(s) for s in scores]
     except Exception as e:
-        print(f"[MultiQuerySearch] 리랭킹 오류: {e}")
+        logger.warning(f"[MultiQuerySearch] 리랭킹 오류: {e}")
         scores = [0.0] * len( pairs )        
         scores_as_float = [0.0] * len(pairs)
 
@@ -685,13 +691,13 @@ def node_summary_conversation(state: State):
         prediction: dspy.Prediction = summary_classsifier.forward( summary=summary, message=messages )
         return { "summary": prediction.new_summary }
     except RateLimitError as e:
-        print(f"[Summary] 오류: {e}")
+        logger.warning(f"[Summary] 오류: {e}")
         return { "summary": summary }
     except APIError as e:
-        print(f"[Summary] 오류: {e}")
+        logger.warning(f"[Summary] 오류: {e}")
         return { "summary": summary }
     except Exception as e:
-        print(f"[Summary] 오류: {e}")
+        logger.warning(f"[Summary] 오류: {e}")
         return { "summary": summary }
 
 
@@ -815,14 +821,14 @@ def node_evaluate(state:State):
             return_executor=True,
         )
     except Exception as e:
-        print(f"[RAGAS] 실패: {type(e).__name__}: {e}")
+        logger.warning(f"[RAGAS] 실패: {type(e).__name__}: {e}")
         return {}
 
     # 결과 파싱(현재 그래프는 dataset 1행 평가가 일반적)
     try:
         raw_scores = executor.results()
     except Exception as e:
-        print(f"[RAGAS] 결과 수집 실패: {type(e).__name__}: {e}")
+        logger.warning(f"[RAGAS] 결과 수집 실패: {type(e).__name__}: {e}")
         return {}
 
     score_dict = {}

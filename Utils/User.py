@@ -45,6 +45,7 @@ class DB:
         DB.check_expire_users()
         return DB._user_store[user_id]
     
+    @staticmethod
     def delete_user(user_id: str) -> None:
         """
         유저 정보 삭제
@@ -55,6 +56,7 @@ class DB:
         if user_id in DB._user_store:
             del DB._user_store[user_id]
     
+    @staticmethod
     def get_history(user_id: str) -> ChatMessageHistory:
         """
         특정 사용자의 대화 내역을 가져옴.

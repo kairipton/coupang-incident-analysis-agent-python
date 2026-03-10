@@ -10,7 +10,6 @@ from langchain_core.documents import Document
 
 import AI.Node as Node
 
-
 # ─── 1. node_route_next ───────────────────────────────────────────────────────
 
 def test_node_route_next_returns_need_tools_when_tool_calls_exist():

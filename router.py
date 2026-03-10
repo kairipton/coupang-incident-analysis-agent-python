@@ -10,6 +10,7 @@ from AI.Agent import Agent
 import Utils.Utils as Utils
 from pprint import pprint
 from typing import Any
+from datetime import datetime
 
 router = APIRouter()
 
@@ -34,7 +35,8 @@ def login(uid:str):
     Returns:
         dict: 첫 페이즈의 환영 메세지
     """
-    user = User.DB.get_or_make_user( uid )
+    User.DB.get_or_make_user( uid )
+    
 
     print( f"{uid}님이 로그인했습니다." )
     
@@ -83,6 +85,8 @@ def userchat(uid:str, message: str):
     user = User.DB.get_or_make_user( uid )
     agent = Agent( uid )
 
+    user.last_login = datetime.now()  # 로그인 시점 업데이트
+
     res = agent.run_qa( message )
     ai_msg=  __get_ai_message( res )
 
@@ -122,6 +126,8 @@ async def userchat_async(uid: str, message: str):
     # 1. 유저 및 에이전트 준비
     user = User.DB.get_or_make_user( uid )
     agent = Agent( uid )
+
+    user.last_login = datetime.now()  # 로그인 시점 업데이트
 
     # 2. 비동기 제너레이터 함수 정의 (여기서 로직과 출력을 동시에 처리)
     async def response_generator():
