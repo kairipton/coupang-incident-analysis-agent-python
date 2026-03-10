@@ -84,9 +84,45 @@ mq_classifier = dspy.Predict(MultiQuerySignature)
 summary_classsifier = dspy.Predict(SummarySignature)
 
 
+@lru_cache(maxsize=1)
+def __get_bm25_retriever(k: int) -> BM25Retriever:
+    """
+    BM25 리트리버 리턴.
+
+    Args:
+        k (int): 리트리버가 반환할 문서 수
+
+    Returns:
+        BM25Retriever: BM25 리트리버 객체
+    """
+
+    spliter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
+    chunks: list[Document] = spliter.split_documents( Utils.get_documents() )
+    for c in chunks:
+        c.metadata[ "category" ] = "docs"
+
+    return BM25Retriever.from_documents( chunks, k=k )
+
+@lru_cache(maxsize=1)
+def __get_vector_retriever(k: int):
+    """
+    벡터 리트리버 리턴.
+
+    Args:
+        k (int): 리트리버가 반환할 문서 수
+
+    Returns:
+        BaseRetriever: 벡터 리트리버 객체
+    """
+
+    db = Utils.load_vector_db()
+    return db.as_retriever( k=k )
+
+
 #endregion
 
 # region 유틸리티
+@lru_cache(maxsize=1)
 def __get_hybrid_retriever(k=6, w=0.5) -> EnsembleRetriever:
     """
     BM25 + Vector 결과를 rank fusion(Weighted RRF)으로 결합한 하이브리드 리트리버를 반환하는 유틸 함수.
@@ -115,27 +151,11 @@ def __get_hybrid_retriever(k=6, w=0.5) -> EnsembleRetriever:
         EnsembleRetriever: 하이브리드 리트리버 객체
     """
 
-    
+    # BM25 리트리버 준비
+    bm25_retriever = __get_bm25_retriever( k )
 
-    # region BM25 리트리버 준비
-    spliter = RecursiveCharacterTextSplitter( chunk_size=1000, chunk_overlap=200 )
-
-    # doc_path = PROJECT_ROOT / "Knowledge Base" / "tech_manual.md"
-    # loader = TextLoader(str(doc_path), encoding="utf8")
-    # docs = loader.load()
-    # chunks = spliter.split_documents( docs )
-    chunks = spliter.split_documents( Utils.get_documents() )
-
-    for c in chunks:
-        c.metadata[ "category" ] = "docs"
-
-    bm25_retriever = BM25Retriever.from_documents( chunks, k=k )
-    # endregion
-
-    # region Vector 리트리버 준비
-    db = Utils.load_vector_db()
-    vector_retriever = db.as_retriever( k=k )
-    # endregion
+    # Vector 리트리버 준비
+    vector_retriever = __get_vector_retriever( k )
 
     
     # 하이브리드(앙상블) 리트리버
@@ -351,7 +371,7 @@ def node_multiquery(state:State):
         "multi_queries": 멀티쿼리로 생성된 질문 리스트
     """
 
-
+    # region 수동 프롬프트 방식
     # prompt = f"""
     #     사용자의 질문을 분석하여, 지식 베이스(매뉴얼)에서 정보를 가장 잘 찾을 수 있도록 검색 엔진용 쿼리를 5개 생성하세요. 
     #     각 쿼리는 서로 다른 키워드와 관점을 포함해야 합니다.
@@ -368,6 +388,7 @@ def node_multiquery(state:State):
     # return {
     #     "multi_queries": answers
     # }
+    #endregion 
 
     # DSPy로 프롬프트 입력 자동화.
     prediction: dspy.Prediction = mq_classifier.forward( input=state["question"] )
@@ -569,6 +590,7 @@ def node_summary_conversation(state: State):
     all_messages: list[BaseMessage] = state.get( "messages", [] )
     messages = __format_messages_for_summary( all_messages )
 
+    # region 수동 프롬프트 방식
     # prompt = f"""
     #     아래는 시스템 엔지니어(사용자)와 AI 어시스턴트(당신) 간의 최신 [대화 내역]과 이전 대화 내역의 [요약본] 입니다.
     #     [대화 내역]과 [요약본] 을 보고 하나의 대화로 요약 해주세요.
@@ -590,6 +612,7 @@ def node_summary_conversation(state: State):
     # return { 
     #     "summary": getattr( answer, "content", str(answer) ) 
     # }
+    # endregion
 
     prediction: dspy.Prediction = summary_classsifier.forward( summary=summary, message=messages )
 
