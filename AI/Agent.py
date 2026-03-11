@@ -1,13 +1,39 @@
+import logging
 from langsmith import traceable
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.state import CompiledStateGraph
 
 import AI.Node as Node
+
+logger = logging.getLogger(__name__)
 
 class Agent:
 
     # uid별 MemorySaver 캐시 (Graph.py처럼 메모리를 유지)
-    _memory_store: dict = {}
+    _memory_store: dict[str, tuple["Agent", MemorySaver]] = {}
+
+    @staticmethod
+    def get_or_make(uid: str) -> "Agent":
+        """
+        사용자의 메모리와 그래프 생성.
+        uid가 있다면 기존의 데이터를 가져오고, 없을 경우 새로 생성함.
+
+        Args:
+            - uid(str): 사용자의 uid
+        
+        Returns:
+            - 새로운 Agent 객체
+        
+        """
+
+        if uid not in Agent._memory_store:
+            memory = MemorySaver()
+            newAgent = Agent( uid, memory )
+            Agent._memory_store[ uid ] = (newAgent, memory)
+
+        agent, _ = Agent._memory_store[ uid ]
+        return agent
 
     @staticmethod
     def clear_memory(uid: str):
@@ -20,11 +46,12 @@ class Agent:
 
         Agent._memory_store.pop(uid, None)
 
-    def __init__(self, uid: str):
+    def __init__(self, uid: str, memory: MemorySaver):
 
         """
         Args:
             uid (str): 접속 대상자의 uid. 대화중 기억력에 쓰임.
+            memory (MemorySaver): LangGraph의 MemorySaver 객체. 그래프의 체크포인트로 쓰임.
         """
 
         self.uid = uid
@@ -32,10 +59,10 @@ class Agent:
         self.config = { "configurable" : { "thread_id" : uid } }
         
         # 저장된 메모리가 없으면 새로 만듦.
-        if uid not in Agent._memory_store:
-            Agent._memory_store[uid] = MemorySaver()
+        # if uid not in Agent._memory_store:
+        #     Agent._memory_store[uid] = MemorySaver()
 
-        self.memory = Agent._memory_store[uid]
+        self.memory = memory
 
         """ 그래프에 쓰일 노드들을 정의 함"""
         self.builder.add_node( "question", Node.node_input_question )
@@ -70,7 +97,7 @@ class Agent:
         self.builder.add_edge( "graph_end", END )
 
         self.graph = self.builder.compile( checkpointer=self.memory )
-        print( self.graph.get_graph().draw_ascii() )
+        logger.debug( self.graph.get_graph().draw_ascii() )
 
         pass
 

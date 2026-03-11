@@ -2,7 +2,6 @@
 from langchain_core.tools import tool
 from langchain_community.tools.tavily_search import TavilySearchResults
 from Utils import User
-import config as Config
 
 
 # @tool

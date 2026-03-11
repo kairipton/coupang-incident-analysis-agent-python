@@ -1,4 +1,5 @@
 import os
+import logging
 import dotenv
 
 # [핵심] 실행 위치가 어디든 상관없이, main.py 파일 옆에 있는 .env를 강제로 찾아냅니다.
@@ -20,7 +21,6 @@ import asyncio
 from Utils import User
 import AI.Agent as Agent
 import Utils.Utils as Utils
-import config as Config
 import router as API
 
 app = FastAPI()
@@ -77,13 +77,17 @@ def on_startup():
         # 이 함수에서 전역 변수에 값을 "대입"하므로 global 선언이 필요합니다.
         global vector_db
 
-        print("서버 시작중...", flush=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+        )
+        logging.info("서버 시작중...")
 
         # 크로마DB 로드: 기존 DB가 있으면 불러오고, 없으면 새로 만듭니다.
         # (이 작업이 무거우면 서버 시작이 그만큼 늦어질 수 있습니다.)
         vector_db = Utils.load_vector_db()
 
-        print("서버가 정상적으로 가동됩니다.", flush=True)
+        logging.info("서버가 정상적으로 가동됩니다.")
 
         #login("TEST")
         #userchat("TEST", "안녕?")

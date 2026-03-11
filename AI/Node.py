@@ -37,7 +37,7 @@ import dspy
 from typing import Any
 
 import Utils.Utils as Utils
-import config as Config
+from config import settings
 from AI.tools import all_tools
 
 dotenv.load_dotenv()
@@ -45,12 +45,12 @@ dotenv.load_dotenv()
 #PROJECT_ROOT = Utils.find_project_root( __file__ )
 
 # 도구까지 바인딩 시켜놓음
-llm = ChatOpenAI( model=Config.llm_model_name, temperature=0 )
+llm = ChatOpenAI( model=settings.llm_model_name, temperature=0 )
 llm_with_tool = llm.bind_tools( all_tools )
 
 # DSPy 설정
 api_key = os.getenv( "OPENAI_API_KEY", "" )
-dspy_lm = dspy.LM( model=f"openai/{Config.llm_model_name}", api_key=api_key, temperature=0.0 )
+dspy_lm = dspy.LM( model=f"openai/{settings.llm_model_name}", api_key=api_key, temperature=0.0 )
 dspy.configure( lm=dspy_lm )
 
 
@@ -230,9 +230,9 @@ def __get_cross_encoder_reranker():
     주의: 처음 로딩 시 모델 다운로드/로딩 비용이 있고, 문서 개수만큼 쌍을 점수화하므로
     후보 문서 수가 많을수록 시간이 늘어납니다.
     """
-    model_name = Config.cross_encoder_rerank_model_name
+    model_name = settings.cross_encoder_rerank_model_name
 
-    device = Config.cross_encoder_device
+    device = settings.cross_encoder_device
 
     return CrossEncoder(model_name, device=device)
 # endregion
@@ -253,7 +253,7 @@ def node_input_question(state: State):
         "question": 사용자의 질문
     """
 
-    print( f"질문: {state['messages'][-1].content}" ) 
+    logger.info( f"질문: {state['messages'][-1].content}" )
 
     return { "question": state["messages"][-1].content }
 
@@ -445,8 +445,8 @@ def node_hybrid_search(state:State):
 
     # 최적화중에는 최적화된 값을 사용함.
     # 라이브중에는 상수처럼 사용
-    k = state.get( "opt_k", Config.retriever_k )
-    w = state.get( "opt_w", Config.retriever_w )
+    k = state.get( "opt_k", settings.retriever_k )
+    w = state.get( "opt_w", settings.retriever_w )
 
     queries = state.get("multi_queries", [])
     retriever = __get_hybrid_retriever( k, w )
@@ -518,7 +518,7 @@ def node_hybrid_search(state:State):
 
     # 최적화중에는 최적화된 값을 사용함.
     # 라이브중에는 상수처럼 사용
-    k = state.get( "opt_top_k", Config.reranking_top_k )
+    k = state.get( "opt_top_k", settings.reranking_top_k )
 
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, k) ]
@@ -562,7 +562,7 @@ def node_multiquery_search(state:State):
     # 그러므로 검색 후 적절히 걸러주는게 좋다. (Rerank 등..)
     # Unity로 전달할 메타데이터용: 멀티쿼리 생성 결과를 state에 남김
     try:
-        mq_llm = ChatOpenAI(model=Config.query_llm_model_name, temperature=0)
+        mq_llm = ChatOpenAI(model=settings.query_llm_model_name, temperature=0)
         mq_answer = mq_llm.invoke(template.format(question=state["question"]))
         mq_text = getattr(mq_answer, "content", "") or str(mq_answer)
         multi_queries = [q.strip() for q in mq_text.splitlines() if q.strip()]
@@ -576,8 +576,8 @@ def node_multiquery_search(state:State):
         logger.warning(f"[MultiQuerySearch] 멀티쿼리 생성 오류: {e}")
         multi_queries = []
 
-    k = state.get( "opt_k", Config.retriever_k )
-    w = state.get( "opt_w", Config.retriever_w )
+    k = state.get( "opt_k", settings.retriever_k )
+    w = state.get( "opt_w", settings.retriever_w )
 
     mqr = MultiQueryRetriever.from_llm(
         retriever=__get_hybrid_retriever( k, w ),
@@ -631,7 +631,7 @@ def node_multiquery_search(state:State):
     # 파이썬에서는 튜플의 값을 배열의 인덱스처럼 사용하여 표현할 수 있음
     score_doc.sort( key=lambda x: x[0], reverse=True )
 
-    top_k = state.get( "opt_top_k", Config.reranking_top_k )
+    top_k = state.get( "opt_top_k", settings.reranking_top_k )
 
     # 점수 순으로 정렬된 리스트에서 첫 인덱스부터 최대 5개를 가져옴.
     top_scored = score_doc[: max(1, top_k)]
@@ -719,14 +719,14 @@ def node_evaluate(state:State):
     # State를 더럽히지 않기 위해, 평가 결과는 state에 저장하지 않고 출력만 합니다.
     # (그래프 노드 반환값은 빈 dict로 처리)
     if not question or not contexts or not answer:
-        print("[RAGAS] 스킵: question/answer/documents 중 하나가 비어있음")
+        logger.warning("[RAGAS] 스킵: question/answer/documents 중 하나가 비어있음")
         return {}
 
     # contexts는 list[str] 형태가 안전합니다.
     # (Document 객체나 None 등이 섞이면 ragas 내부에서 깨질 수 있으므로 문자열로 정규화)
     contexts = [str(c) for c in contexts if c]
     if not contexts:
-        print("[RAGAS] 스킵: retrieved_contexts가 비어있음")
+        logger.warning("[RAGAS] 스킵: retrieved_contexts가 비어있음")
         return {}
     
     # RAGAS 포맷에 맞게 데이터 구성
@@ -751,7 +751,7 @@ def node_evaluate(state:State):
 
     # 평가 시작
     # metrics는 평가 항목 리스트를 나타내며, ragas에서 미리 정의된 개체들로 사용함.
-    print("\n[RAGAS 평가 진행 중...]")
+    logger.info("[RAGAS] 평가 진행 중...")
     # ragas 0.4.x의 AnswerRelevancy는 기본 strictness=3으로 LLM에 n=3 generations을 요구합니다.
     # 일부 모델/환경에서는 n>1이 무시되어 내부에서 IndexError가 발생할 수 있어 strictness=1로 낮춥니다.
     from ragas.metrics import AnswerRelevancy
@@ -802,12 +802,12 @@ def node_evaluate(state:State):
         from ragas.embeddings import LangchainEmbeddingsWrapper
         from langchain_openai import OpenAIEmbeddings
 
-        embedding_model = Config.embedding_model_name
+        embedding_model = settings.embedding_model_name
         embeddings = OpenAIEmbeddings(model=embedding_model)
 
         # 평가용 LLM은 답변 생성용과 분리하는 게 안전합니다.
         # gpt-5/o-계열 등 temperature 제약 모델을 위해 temperature=1로 고정.
-        eval_llm = ChatOpenAI(model=Config.llm_model_name, temperature=0)
+        eval_llm = ChatOpenAI(model=settings.llm_model_name, temperature=0)
 
         # NOTE: ragas 0.4.3에는 EvaluationResult 생성 시(트레이스 파싱) root_traces가 비어
         # IndexError가 발생하는 케이스가 있습니다. return_executor=True로 EvaluationResult
@@ -858,7 +858,7 @@ def node_evaluate(state:State):
             remove_messages.append( RemoveMessage( m.id ) )
 
 
-    print(f"\n[RAGAS 평가 결과] {score_dict}")
+    logger.info(f"[RAGAS] 평가 결과: {score_dict}")
 
     return {
         "messages": remove_messages,
@@ -871,7 +871,7 @@ def node_graph_end(state:State):
     정리가 필요한 기능 등등을 여기에 작성 할 것.
     """
 
-    print( "\n[그래프 종료]\n" )
+    logger.info("[그래프 종료]")
     
     return {
         "multi_queries": state.get("multi_queries", []),

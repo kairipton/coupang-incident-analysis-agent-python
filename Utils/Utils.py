@@ -19,7 +19,7 @@ from langchain_community.document_loaders import TextLoader
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-import config as Config 
+from config import settings
 
 def load_vector_db(remake_db=False) -> Chroma:
     """
@@ -29,9 +29,9 @@ def load_vector_db(remake_db=False) -> Chroma:
         remake_db: True로 설정 시 기존 DB가 있더라도 새로 만듦.
     """
 
-    db_path = Config.vector_db_path
-    collection_name = Config.collection_name
-    embedding = OpenAIEmbeddings( model=Config.embedding_model_name )
+    db_path = settings.vector_db_path
+    collection_name = settings.collection_name
+    embedding = OpenAIEmbeddings( model=settings.embedding_model_name )
 
     # 벡터DB를 만들거나 불러오기.
     # 응답시 어떤 여러 컬렉션의 정보가 필요할 경우 "멀티 리트리버", "라우터 체인" 같은 기술을 쓴다고 하지만
@@ -49,13 +49,13 @@ def load_vector_db(remake_db=False) -> Chroma:
 
         all_docs = []
         extensions = [ ".txt", ".pdf" ]
-        for f in os.listdir( Config.doc_folder_path ):
+        for f in os.listdir( settings.doc_folder_path ):
 
             #if f.endswith( tuple( extensions ) ) == False:
 
             # 문서 로드
-            #text_loader = TextLoader( f"{Config.doc_folder_path}/{f}", encoding="utf8" )
-            text_loader = PyPDFLoader( f"{Config.doc_folder_path}/{f}" )
+            #text_loader = TextLoader( f"{settings.doc_folder_path}/{f}", encoding="utf8" )
+            text_loader = PyPDFLoader( f"{settings.doc_folder_path}/{f}" )
 
             # 청킹
             docs = text_splitter.split_documents( text_loader.load() )
@@ -100,10 +100,10 @@ def get_documents() -> list[Document]:
     """
 
     all_docs: list[Document] = []
-    for f in  os.listdir( Config.doc_folder_path ):
+    for f in  os.listdir( settings.doc_folder_path ):
         if f.endswith(".pdf") == False:
             continue
-        loader = PyPDFLoader( f"{Config.doc_folder_path}/{f}" )
+        loader = PyPDFLoader( f"{settings.doc_folder_path}/{f}" )
         docs = loader.load()
         all_docs.extend( docs )
 

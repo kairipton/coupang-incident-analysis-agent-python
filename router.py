@@ -1,9 +1,12 @@
+import logging
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 import asyncio
 import json
 from langsmith import traceable
 from langchain_core.messages import BaseMessage, AIMessage
+
+logger = logging.getLogger(__name__)
 
 from Utils import User
 from AI.Agent import Agent
@@ -38,7 +41,7 @@ def login(uid:str):
     User.DB.get_or_make_user( uid )
     
 
-    print( f"{uid}님이 로그인했습니다." )
+    logger.info( f"{uid}님이 로그인했습니다." )
     
     #return {"message": f"{user.uid}님 환영합니다."}
 
@@ -61,7 +64,7 @@ def logout(uid:str):
     User.DB.delete_user( uid )
     Agent.clear_memory( uid )  # 대화 메모리 삭제
 
-    print( f"{uid}님이 로그아웃했습니다." )
+    logger.info( f"{uid}님이 로그아웃했습니다." )
 
     return {"message": f"{uid}님 로그아웃되었습니다."}
 
@@ -80,10 +83,10 @@ def userchat(uid:str, message: str):
         dict: AI의 답변(message), 산소량(o2), 현재 페이즈(phase)
     """
 
-    print( f"[{uid}의 질문]: {message}" )
+    logger.info( f"[{uid}의 질문]: {message}" )
 
     user = User.DB.get_or_make_user( uid )
-    agent = Agent( uid )
+    agent = Agent.get_or_make( uid )
 
     user.last_login = datetime.now()  # 로그인 시점 업데이트
 
@@ -121,11 +124,12 @@ async def userchat_async(uid: str, message: str):
             {"type":"token","text":"..."}\n
     """
 
-    print( f"[{uid}의 질문(Stream)]: {message}" )
+    logger.info( f"[{uid}의 질문(Stream)]: {message}" )
 
     # 1. 유저 및 에이전트 준비
     user = User.DB.get_or_make_user( uid )
-    agent = Agent( uid )
+    #agent = Agent( uid )
+    agent = Agent.get_or_make( uid )
 
     user.last_login = datetime.now()  # 로그인 시점 업데이트
 
@@ -194,7 +198,7 @@ async def userchat_async(uid: str, message: str):
                         qa_result[ "ragas" ] = output.get( "ragas", {} )
                         qa_result[ "doc_names" ] = output.get( "doc_names", [] )
 
-                        print( f"멀티 쿼리 수: {qa_result['query_count']}, RAGAS 점수: {qa_result['ragas']}, 활용된 문서: {qa_result['doc_names']}" )
+                        logger.info( f"멀티 쿼리 수: {qa_result['query_count']}, RAGAS 점수: {qa_result['ragas']}, 활용된 문서: {qa_result['doc_names']}" )
 
             elif is_chain_start and is_graph_node_start:
 
@@ -208,7 +212,7 @@ async def userchat_async(uid: str, message: str):
                     unity_label = metadata.get("unity_label")
                     if unity_label is not None:
                         payload["meta"] = unity_label
-                        print( unity_label )
+                        logger.debug( unity_label )
 
                     yield _ndjson(payload)
 
