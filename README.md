@@ -7,7 +7,10 @@
 
 > Unity 12년차 클라이언트 개발자가 AI 서비스 엔지니어로 전직하기 위해 만든 프로젝트입니다. Unity 클라이언트는  기존 전문성을 활용한 테스트 클라이언트이며, 본 프로젝트의 핵심은 Python AI 파이프라인 서버 구현에 있습니다.
 
-**[▶ 데모 바로가기](http://157.173.102.95:8101/)**
+> 이 프로젝트에서 기술적 사용이 부족했거나, 미채택된 기술(Multi-Agent, Self-Correction, LLM as a Judge)은  
+> 후속 포트폴리오에서 구현했습니다. → [News Fact-Check Agent](https://github.com/kairipton/news_fact_check_agent)
+
+**[▶ 데모 바로가기](https://coupang-incident.mbh.watch/)**
 
 ---
 
